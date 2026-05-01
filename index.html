@@ -9,6 +9,14 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+window.SUPABASE_CONFIG={
+  url:'https://vcoufttkvrxeqzckijtu.supabase.co',
+  anonKey:'sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W',
+  bucket:'bnart-lms',
+  dbObjectPath:'live-db.json'
+};
+</script>
 
 <style>
 /*═══════════════════════════════════════════════════════════════
@@ -2307,7 +2315,57 @@ B-NART Lab · 0553271127</textarea></div>
           </div>
 
           <div id="br-no-cloud" style="font-size:.75rem;color:var(--ink3);padding:.5rem 0">
-            Cloud sync not active — connect Supabase in the config to enable cloud backups.
+            Cloud sync not active — connect Supabase in the config below to enable cloud backups.
+          </div>
+        </div>
+
+        <!-- ══ SUPABASE CLOUD SYNC CONFIG ══════════════════════ -->
+        <div class="card cb mt1" style="margin-top:1.2rem;border-left:4px solid var(--blu)">
+          <div class="fsec" style="color:var(--blu)">☁ Supabase Cloud Sync</div>
+
+          <!-- Status indicator -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.1rem;padding:.75rem 1rem;background:var(--blul);border:1px solid var(--blub);border-radius:var(--rad)">
+            <div id="sb-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--ink4);flex-shrink:0;transition:background .3s"></div>
+            <div>
+              <div style="font-size:.79rem;font-weight:600;color:var(--ink)" id="sb-status-text">Not configured</div>
+              <div style="font-size:.68rem;color:var(--ink3);margin-top:1px" id="sb-status-sub">Enter your Supabase project URL and anon key below, then click Save & Connect.</div>
+            </div>
+            <button class="btn btn-o btn-sm" style="margin-left:auto;flex-shrink:0" onclick="testCloudConnection()">Test Connection</button>
+          </div>
+
+          <div class="g2 mb1">
+            <div class="fg">
+              <label>Supabase Project URL</label>
+              <input id="sb-url" type="url" placeholder="https://xxxxxxxxxxxx.supabase.co" autocomplete="off" style="font-family:'JetBrains Mono',monospace;font-size:.78rem">
+            </div>
+            <div class="fg">
+              <label>Supabase Anon / Public Key</label>
+              <input id="sb-key" type="password" placeholder="eyJhbGciOiJIUzI1NiIsIn…" autocomplete="off" style="font-family:'JetBrains Mono',monospace;font-size:.78rem">
+            </div>
+          </div>
+          <div class="g2 mb1">
+            <div class="fg">
+              <label>Storage Bucket Name</label>
+              <input id="sb-bucket" type="text" value="bnart-lms" placeholder="bnart-lms">
+            </div>
+            <div class="fg">
+              <label>DB Object Path</label>
+              <input id="sb-path" type="text" value="live-db.json" placeholder="live-db.json">
+            </div>
+          </div>
+
+          <div style="background:var(--surf2);border:1px solid var(--bdr2);border-radius:var(--rad);padding:.85rem;margin-bottom:1rem;font-size:.73rem;color:var(--ink3);line-height:1.7">
+            <strong style="color:var(--blu)">How to set up:</strong><br>
+            1. Go to <a href="https://supabase.com" target="_blank" style="color:var(--blu)">supabase.com</a> → create a free project.<br>
+            2. In your project: go to <strong>Storage → New Bucket</strong> → name it <code style="background:var(--bdr2);padding:1px 5px;border-radius:4px">bnart-lms</code> → set it to <strong>Public</strong>.<br>
+            3. Copy your <strong>Project URL</strong> and <strong>anon public key</strong> from <em>Settings → API</em> and paste above.<br>
+            4. Click <strong>Save & Connect</strong> — the LMS will sync all data to the cloud automatically every time you save.
+          </div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-blu" onclick="saveCloudConfig()">☁ Save & Connect</button>
+            <button class="btn btn-o" onclick="disconnectCloud()">Disconnect</button>
+            <button class="btn btn-o btn-sm" id="sb-show-key-btn" onclick="toggleShowKey()">👁 Show Key</button>
           </div>
         </div>
       </div>
@@ -3099,7 +3157,7 @@ const LS={
   get:k=>{try{return JSON.parse(localStorage.getItem('bnart4_'+k))}catch{return null}},
   set:(k,v)=>localStorage.setItem('bnart4_'+k,JSON.stringify(v))
 };
-const SUPABASE_DEFAULTS={url:'',anonKey:'',bucket:'bnart-lms',dbObjectPath:'live-db.json'};
+const SUPABASE_DEFAULTS={url:'https://vcoufttkvrxeqzckijtu.supabase.co',anonKey:'sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W',bucket:'bnart-lms',dbObjectPath:'live-db.json'};
 const LIVE_SYNC={enabled:false,pendingTimer:null,pollTimer:null,lastCloudStamp:0};
 const BACKUP_CFG={folder:'backups',minIntervalMs:6*60*60*1000,keep:50};
 let sbClient=null;
@@ -3137,6 +3195,104 @@ function scheduleCloudSave(){
   if(LIVE_SYNC.pendingTimer)clearTimeout(LIVE_SYNC.pendingTimer);
   // 1.5 s debounce — coalesces rapid consecutive saves into one upload
   LIVE_SYNC.pendingTimer=setTimeout(()=>{uploadDbToCloud();},1500);
+}
+
+/* ═══ CLOUD CONFIG UI ═══════════════════════════════════════ */
+function loadCloudConfigUI(){
+  const cfg=getSupabaseConfig();
+  const urlEl=document.getElementById('sb-url');
+  const keyEl=document.getElementById('sb-key');
+  const bucketEl=document.getElementById('sb-bucket');
+  const pathEl=document.getElementById('sb-path');
+  if(urlEl)urlEl.value=cfg.url||'';
+  if(keyEl)keyEl.value=cfg.anonKey||'';
+  if(bucketEl)bucketEl.value=cfg.bucket||'bnart-lms';
+  if(pathEl)pathEl.value=cfg.dbObjectPath||'live-db.json';
+  updateCloudStatusUI();
+}
+function updateCloudStatusUI(){
+  const dot=document.getElementById('sb-status-dot');
+  const txt=document.getElementById('sb-status-text');
+  const sub=document.getElementById('sb-status-sub');
+  if(!dot)return;
+  if(LIVE_SYNC.enabled){
+    dot.style.background='var(--grn)';
+    if(txt)txt.textContent='Connected — Cloud Sync Active';
+    if(sub)sub.textContent='Data is being synced to Supabase automatically on every save.';
+  }else{
+    const cfg=getSupabaseConfig();
+    if(cfg.url&&cfg.anonKey){
+      dot.style.background='var(--gold)';
+      if(txt)txt.textContent='Credentials saved but not yet connected';
+      if(sub)sub.textContent='Click Test Connection or reload the page to activate sync.';
+    }else{
+      dot.style.background='var(--ink4)';
+      if(txt)txt.textContent='Not configured';
+      if(sub)sub.textContent='Enter your Supabase project URL and anon key below, then click Save & Connect.';
+    }
+  }
+}
+async function saveCloudConfig(){
+  const url=(document.getElementById('sb-url')?.value||'').trim();
+  const key=(document.getElementById('sb-key')?.value||'').trim();
+  const bucket=(document.getElementById('sb-bucket')?.value||'bnart-lms').trim();
+  const dbpath=(document.getElementById('sb-path')?.value||'live-db.json').trim();
+  if(!url||!key){toast('Please enter both the Supabase URL and anon key','err');return;}
+  if(!url.startsWith('https://')){toast('URL must start with https://','err');return;}
+  LS.set('supabaseCfg',{url,anonKey:key,bucket,dbObjectPath:dbpath});
+  toast('Cloud credentials saved — connecting...','info');
+  if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
+  LIVE_SYNC.enabled=false;sbClient=null;
+  const ok=await initCloudSync();
+  if(ok){
+    const cloudDb=await pullDbFromCloud();
+    if(cloudDb&&getDbStamp(cloudDb)>=getDbStamp(DB)){
+      DB=Object.assign({},DB,cloudDb);
+      await applyDbGuards();
+      LS.set('db',DB);
+      toast('Cloud data loaded and merged!','ok');
+    }else{
+      await uploadDbToCloud();
+      toast('Current data pushed to cloud!','ok');
+    }
+    startCloudPolling();
+  }else{
+    toast('Connection failed — check your URL and key','err');
+  }
+  updateCloudStatusUI();
+}
+async function testCloudConnection(){
+  const cfg=getSupabaseConfig();
+  const urlInp=(document.getElementById('sb-url')?.value||'').trim();
+  const keyInp=(document.getElementById('sb-key')?.value||'').trim();
+  const testUrl=urlInp||cfg.url;
+  const testKey=keyInp||cfg.anonKey;
+  if(!testUrl||!testKey){toast('Enter URL and anon key first','err');return;}
+  toast('Testing connection...','info');
+  try{
+    const testClient=window.supabase.createClient(testUrl,testKey);
+    const bucketName=(document.getElementById('sb-bucket')?.value||cfg.bucket||'bnart-lms').trim();
+    const {error}=await testClient.storage.from(bucketName).list('',{limit:1});
+    if(error){toast('Connection test failed: '+error.message,'err');}
+    else{toast('Connection successful! Bucket accessible.','ok');}
+  }catch(e){toast('Connection error: '+e.message,'err');}
+}
+function disconnectCloud(){
+  if(!confirm('Disconnect cloud sync? Your local data will be preserved.'))return;
+  if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
+  LIVE_SYNC.enabled=false;sbClient=null;
+  LS.set('supabaseCfg',{url:'',anonKey:'',bucket:'bnart-lms',dbObjectPath:'live-db.json'});
+  const keyEl=document.getElementById('sb-key');if(keyEl)keyEl.value='';
+  const urlEl=document.getElementById('sb-url');if(urlEl)urlEl.value='';
+  updateCloudStatusUI();
+  toast('Cloud sync disconnected.');
+}
+function toggleShowKey(){
+  const inp=document.getElementById('sb-key');
+  const btn=document.getElementById('sb-show-key-btn');
+  if(!inp)return;
+  if(inp.type==='password'){inp.type='text';if(btn)btn.textContent='Hide Key';}
+  else{inp.type='password';if(btn)btn.textContent='Show Key';}
 }
 async function uploadDbToCloud(){
   if(!LIVE_SYNC.enabled)return;
@@ -3714,7 +3870,7 @@ function gp(id,el){
   document.getElementById('page-'+id)?.classList.add('on');
   if(el)el.classList.add('on');
   document.getElementById('tb-title').textContent=TTLS[id]||id;
-  const fns={dash:refreshDash,pts:renderPts,ords:renderOrds,res:renderResList,rpts:renderRpts,scans:renderScans,bill:renderBill,expenses:renderExpenses,analytics:renderAnalytics,staff:renderStaff,params:renderParams,social:renderSocial,reqs:renderReqs,discounts:renderDisc,auditlog:renderAuditLog,reconcile:renderReconcile,settings:()=>{renderBackupUI();renderSecurityStatus();const dark=document.documentElement.getAttribute('data-theme')==='dark';const st=document.getElementById('dm-toggle-settings');if(st)st.checked=dark;const sys=document.getElementById('dm-system');if(sys)sys.checked=localStorage.getItem('bnart-theme-system')==='1';}};
+  const fns={dash:refreshDash,pts:renderPts,ords:renderOrds,res:renderResList,rpts:renderRpts,scans:renderScans,bill:renderBill,expenses:renderExpenses,analytics:renderAnalytics,staff:renderStaff,params:renderParams,social:renderSocial,reqs:renderReqs,discounts:renderDisc,auditlog:renderAuditLog,reconcile:renderReconcile,settings:()=>{renderBackupUI();renderSecurityStatus();loadCloudConfigUI();const dark=document.documentElement.getAttribute('data-theme')==='dark';const st=document.getElementById('dm-toggle-settings');if(st)st.checked=dark;const sys=document.getElementById('dm-system');if(sys)sys.checked=localStorage.getItem('bnart-theme-system')==='1';}};
   fns[id]?.();
 }
 const qni=p=>document.querySelector(`.ni[data-p="${p}"]`);
@@ -7810,6 +7966,8 @@ function initApp(){
   refreshDash();
   checkResultView();
   updateBadges();
+  // Update cloud status badge after DB load
+  setTimeout(updateCloudStatusUI, 500);
 }
 
 // Bootstrap on page load
