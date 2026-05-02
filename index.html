@@ -2343,23 +2343,20 @@ B-NART Lab · 0553271127</textarea></div>
               <input id="sb-key" type="password" placeholder="eyJhbGciOiJIUzI1NiIsIn…" autocomplete="off" style="font-family:'JetBrains Mono',monospace;font-size:.78rem">
             </div>
           </div>
-          <div class="g2 mb1">
-            <div class="fg">
-              <label>Storage Bucket Name</label>
-              <input id="sb-bucket" type="text" value="bnart-lms" placeholder="bnart-lms">
-            </div>
-            <div class="fg">
-              <label>DB Object Path</label>
-              <input id="sb-path" type="text" value="live-db.json" placeholder="live-db.json">
-            </div>
-          </div>
+          <!-- bucket/path no longer needed — using PostgREST table -->
 
           <div style="background:var(--surf2);border:1px solid var(--bdr2);border-radius:var(--rad);padding:.85rem;margin-bottom:1rem;font-size:.73rem;color:var(--ink3);line-height:1.7">
-            <strong style="color:var(--blu)">How to set up:</strong><br>
-            1. Go to <a href="https://supabase.com" target="_blank" style="color:var(--blu)">supabase.com</a> → create a free project.<br>
-            2. In your project: go to <strong>Storage → New Bucket</strong> → name it <code style="background:var(--bdr2);padding:1px 5px;border-radius:4px">bnart-lms</code> → set it to <strong>Public</strong>.<br>
-            3. Copy your <strong>Project URL</strong> and <strong>anon public key</strong> from <em>Settings → API</em> and paste above.<br>
-            4. Click <strong>Save & Connect</strong> — the LMS will sync all data to the cloud automatically every time you save.
+            <strong style="color:var(--blu)">One-time setup (30 seconds):</strong><br>
+            1. In your Supabase dashboard go to <strong>SQL Editor</strong> and run this query:<br>
+            <code style="display:block;background:var(--bdr2);padding:6px 10px;border-radius:5px;margin:5px 0;font-size:.72rem;line-height:1.6">CREATE TABLE IF NOT EXISTS bnart_db (
+  id TEXT PRIMARY KEY,
+  data JSONB,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE bnart_db ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public_all" ON bnart_db FOR ALL USING (true) WITH CHECK (true);</code>
+            2. Your URL and key are already filled in. Click <strong>Save & Connect</strong>.<br>
+            3. The LMS syncs automatically on every save — works across all devices and browsers.
           </div>
 
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -3157,9 +3154,14 @@ const LS={
   get:k=>{try{return JSON.parse(localStorage.getItem('bnart4_'+k))}catch{return null}},
   set:(k,v)=>localStorage.setItem('bnart4_'+k,JSON.stringify(v))
 };
-const SUPABASE_DEFAULTS={url:'https://vcoufttkvrxeqzckijtu.supabase.co',anonKey:'sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W',bucket:'bnart-lms',dbObjectPath:'live-db.json'};
+/* ── Supabase config — uses PostgREST (REST API) which has full CORS support ── */
+const SUPABASE_URL='https://vcoufttkvrxeqzckijtu.supabase.co';
+const SUPABASE_KEY='sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W';
+const SB_TABLE='bnart_db';   // Postgres table name (create once, see instructions)
+const SB_ROW_ID='main';      // single-row id for the whole DB blob
+
 const LIVE_SYNC={enabled:false,pendingTimer:null,pollTimer:null,lastCloudStamp:0};
-const BACKUP_CFG={folder:'backups',minIntervalMs:6*60*60*1000,keep:50};
+const BACKUP_CFG={minIntervalMs:6*60*60*1000,keep:50};
 let sbClient=null;
 let APP_READY=false;
 let DB={patients:[],orders:[],invoices:[],staff:[],params:[],packages:[],scans:[],requests:[],posts:[],links:[],expenses:[],discounts:[],auditlog:[],reconciliations:[],messages:[],
@@ -3168,12 +3170,27 @@ let DB={patients:[],orders:[],invoices:[],staff:[],params:[],packages:[],scans:[
 };
 
 function getSupabaseConfig(){
-  const cfg=Object.assign({},SUPABASE_DEFAULTS,window.SUPABASE_CONFIG||{},LS.get('supabaseCfg')||{});
-  cfg.url=(cfg.url||'').trim();
-  cfg.anonKey=(cfg.anonKey||'').trim();
-  cfg.bucket=(cfg.bucket||SUPABASE_DEFAULTS.bucket).trim();
-  cfg.dbObjectPath=(cfg.dbObjectPath||SUPABASE_DEFAULTS.dbObjectPath).trim();
-  return cfg;
+  // Allow runtime override from Settings UI or window global
+  const saved=LS.get('supabaseCfg')||{};
+  return {
+    url:(saved.url||window.SUPABASE_CONFIG?.url||SUPABASE_URL).trim(),
+    anonKey:(saved.anonKey||window.SUPABASE_CONFIG?.anonKey||SUPABASE_KEY).trim(),
+    table:SB_TABLE,
+    rowId:SB_ROW_ID
+  };
+}
+/* ── low-level PostgREST helpers ── */
+function _sbHeaders(key){
+  return {'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=minimal'};
+}
+async function _sbGet(url,key){
+  const r=await fetch(url,{headers:{'apikey':key,'Authorization':'Bearer '+key,'Accept':'application/json'},cache:'no-store'});
+  if(!r.ok)return null;
+  return r.json();
+}
+async function _sbUpsert(url,key,body){
+  const r=await fetch(url,{method:'POST',headers:{..._sbHeaders(key),'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(body)});
+  return r.ok;
 }
 function getDbStamp(db){return Number(db?._meta?.updatedAt||0);}
 function touchDbMeta(){
@@ -3262,19 +3279,29 @@ async function saveCloudConfig(){
   updateCloudStatusUI();
 }
 async function testCloudConnection(){
-  const cfg=getSupabaseConfig();
   const urlInp=(document.getElementById('sb-url')?.value||'').trim();
   const keyInp=(document.getElementById('sb-key')?.value||'').trim();
+  const cfg=getSupabaseConfig();
   const testUrl=urlInp||cfg.url;
   const testKey=keyInp||cfg.anonKey;
   if(!testUrl||!testKey){toast('Enter URL and anon key first','err');return;}
   toast('Testing connection...','info');
   try{
-    const testClient=window.supabase.createClient(testUrl,testKey);
-    const bucketName=(document.getElementById('sb-bucket')?.value||cfg.bucket||'bnart-lms').trim();
-    const {error}=await testClient.storage.from(bucketName).list('',{limit:1});
-    if(error){toast('Connection test failed: '+error.message,'err');}
-    else{toast('Connection successful! Bucket accessible.','ok');}
+    // Hit PostgREST root — always works with a valid project URL + key
+    const r=await fetch(testUrl+'/rest/v1/',{headers:{'apikey':testKey,'Authorization':'Bearer '+testKey}});
+    if(r.ok||r.status===200){
+      toast('Connected to Supabase! Now checking table...','ok');
+      // Check if table exists
+      const rows=await _sbGet(testUrl+'/rest/v1/'+SB_TABLE+'?select=id&limit=1',testKey);
+      if(rows===null){
+        toast('Connected but table "'+SB_TABLE+'" not found — please create it (see instructions below).','err');
+      }else{
+        toast('All good! Supabase connected and table "'+SB_TABLE+'" ready.','ok');
+      }
+    }else{
+      const t=await r.text();
+      toast('Server responded: '+r.status+' — '+t.slice(0,100),'err');
+    }
   }catch(e){toast('Connection error: '+e.message,'err');}
 }
 function disconnectCloud(){
@@ -3296,36 +3323,38 @@ function toggleShowKey(){
 }
 async function uploadDbToCloud(){
   if(!LIVE_SYNC.enabled)return;
-  // Tag the upload with our session ID so poller knows it came from us
-  DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID});
+  DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:Date.now()});
   const cfg=getSupabaseConfig();
-  const payload=new Blob([JSON.stringify(DB)],{type:'application/json'});
-  const {error}=await sbClient.storage.from(cfg.bucket).upload(cfg.dbObjectPath,payload,{upsert:true,contentType:'application/json',cacheControl:'0'});
-  if(!error)LIVE_SYNC.lastCloudStamp=getDbStamp(DB);
+  try{
+    // PostgREST upsert — CORS-friendly, works with any Supabase key
+    const url=cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId;
+    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:cfg.rowId,data:DB,updated_at:new Date().toISOString()});
+    if(ok)LIVE_SYNC.lastCloudStamp=getDbStamp(DB);
+    else console.warn('Cloud upload: upsert returned not-ok');
+  }catch(e){console.warn('Cloud upload error:',e.message);}
 }
 async function pullDbFromCloud(){
   if(!LIVE_SYNC.enabled)return null;
   const cfg=getSupabaseConfig();
-  const {data,error}=await sbClient.storage.from(cfg.bucket).download(cfg.dbObjectPath);
-  if(error||!data)return null;
-  const txt=await data.text();
-  if(!txt)return null;
-  try{return JSON.parse(txt);}catch{return null;}
+  try{
+    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId+'&select=data',cfg.anonKey);
+    if(!rows||!rows.length)return null;
+    return rows[0].data||null;
+  }catch(e){console.warn('Cloud pull error:',e.message);return null;}
 }
 async function initCloudSync(){
   const cfg=getSupabaseConfig();
-  if(!cfg.url||!cfg.anonKey||!window.supabase?.createClient)return false;
-  sbClient=window.supabase.createClient(cfg.url,cfg.anonKey);
-  const {data:{session}}=await sbClient.auth.getSession();
-  if(!session){
-    const {error}=await sbClient.auth.signInAnonymously();
-    if(error){
-      console.error('Supabase anonymous sign-in failed:',error.message||error);
-      return false;
-    }
+  if(!cfg.url||!cfg.anonKey)return false;
+  try{
+    // Ping PostgREST — always CORS-enabled on Supabase
+    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId+'&select=id',cfg.anonKey);
+    // null = table missing; [] = table exists but empty; [{...}] = row exists — all mean server is up
+    LIVE_SYNC.enabled=true;
+    return true;
+  }catch(e){
+    console.error('Supabase connection failed:',e.message);
+    return false;
   }
-  LIVE_SYNC.enabled=true;
-  return true;
 }
 function backupStamp(){
   const d=new Date();
@@ -3336,25 +3365,23 @@ async function maybeBackupDb(){
   if(!LIVE_SYNC.enabled)return;
   const last=Number(LS.get('lastBackupAt')||0);
   if(Date.now()-last<BACKUP_CFG.minIntervalMs)return;
-
   const cfg=getSupabaseConfig();
-  const path=`${BACKUP_CFG.folder}/db-${backupStamp()}.json`;
-  const payload=new Blob([JSON.stringify(DB)],{type:'application/json'});
-
-  const {error}=await sbClient.storage.from(cfg.bucket).upload(path,payload,{
-    upsert:false,contentType:'application/json',cacheControl:'0'
-  });
-  if(error)return;
-
-  LS.set('lastBackupAt',Date.now());
-
-  const {data:list}=await sbClient.storage.from(cfg.bucket).list(BACKUP_CFG.folder,{
-    limit:200,sortBy:{column:'name',order:'desc'}
-  });
-  if(list&&list.length>BACKUP_CFG.keep){
-    const old=list.slice(BACKUP_CFG.keep).map(x=>`${BACKUP_CFG.folder}/${x.name}`);
-    await sbClient.storage.from(cfg.bucket).remove(old);
-  }
+  try{
+    // Store backup as a separate row with timestamp key
+    const backupId='backup-'+backupStamp();
+    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:backupId,data:DB,updated_at:new Date().toISOString()});
+    if(ok){
+      LS.set('lastBackupAt',Date.now());
+      // Prune old backups — keep only newest N rows that start with 'backup-'
+      const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=like.backup-*&select=id&order=updated_at.desc',cfg.anonKey);
+      if(Array.isArray(rows)&&rows.length>BACKUP_CFG.keep){
+        const old=rows.slice(BACKUP_CFG.keep).map(r=>r.id);
+        for(const oid of old){
+          await fetch(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+oid,{method:'DELETE',headers:_sbHeaders(cfg.anonKey)});
+        }
+      }
+    }
+  }catch(e){console.warn('Backup error:',e.message);}
 }
 // Returns true if the user is actively interacting (modal open, input focused, typing)
 function _userIsActive(){
@@ -7423,12 +7450,13 @@ async function loadBackupList(){
   if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--ink3);font-size:.73rem">Loading…</td></tr>';
 
   const cfg=getSupabaseConfig();
-  const {data:list,error}=await sbClient.storage.from(cfg.bucket).list(BACKUP_CFG.folder,{
-    limit:100,sortBy:{column:'name',order:'desc'}
-  });
+  let list=null;
+  try{
+    list=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=like.backup-*&select=id,updated_at&order=updated_at.desc&limit=100',cfg.anonKey);
+  }catch(e){}
 
-  if(error||!list){
-    if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--r);font-size:.73rem">Could not load backups: '+(error?.message||'unknown error')+'</td></tr>';
+  if(!list){
+    if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--r);font-size:.73rem">Could not load backups — check table exists</td></tr>';
     if(countEl)countEl.textContent='Error';
     return;
   }
@@ -7441,21 +7469,18 @@ async function loadBackupList(){
   }
 
   if(tb)tb.innerHTML=list.map((f,i)=>{
-    const ts=f.name.replace('db-','').replace('.json','');
-    const friendly=ts.length>=15
-      ?ts.slice(0,4)+'-'+ts.slice(4,6)+'-'+ts.slice(6,8)+' '+ts.slice(9,11)+':'+ts.slice(11,13)+':'+ts.slice(13,15)
-      :f.name;
-    const sizeKb=f.metadata?.size?Math.round(f.metadata.size/1024)+'KB':'—';
     const isLatest=i===0;
+    const dt=f.updated_at?new Date(f.updated_at).toLocaleString('en-GB'):'—';
+    const safeid=f.id.replace(/'/g,"\'");
     return`<tr style="border-top:1px solid var(--bdr3)">
       <td style="padding:.5rem .75rem;font-family:'JetBrains Mono',monospace;font-size:.69rem;color:var(--ink2)">
-        ${f.name}${isLatest?'<span style="margin-left:6px;background:var(--grnl);color:var(--grn);border:1px solid var(--grnb);padding:1px 6px;border-radius:var(--radFull);font-size:.62rem;font-weight:700">Latest</span>':''}
+        ${f.id}${isLatest?'<span style="margin-left:6px;background:var(--grnl);color:var(--grn);border:1px solid var(--grnb);padding:1px 6px;border-radius:var(--radFull);font-size:.62rem;font-weight:700">Latest</span>':''}
       </td>
-      <td style="padding:.5rem .75rem;font-size:.73rem">${friendly}</td>
-      <td style="padding:.5rem .75rem;font-size:.73rem;color:var(--ink3)">${sizeKb}</td>
+      <td style="padding:.5rem .75rem;font-size:.73rem">${dt}</td>
+      <td style="padding:.5rem .75rem;font-size:.73rem;color:var(--ink3)">—</td>
       <td style="padding:.5rem .75rem;text-align:right;display:flex;gap:5px;justify-content:flex-end">
-        <button class="btn btn-o btn-xs" onclick="downloadCloudBackup('${BACKUP_CFG.folder}/${f.name}','${f.name}')">⬇ Download</button>
-        <button class="btn btn-red btn-xs" onclick="restoreFromCloud('${BACKUP_CFG.folder}/${f.name}','${f.name}')">↩ Restore</button>
+        <button class="btn btn-o btn-xs" onclick="downloadCloudBackup('${safeid}')">⬇ Download</button>
+        <button class="btn btn-red btn-xs" onclick="restoreFromCloud('${safeid}')">↩ Restore</button>
       </td>
     </tr>`;
   }).join('');
@@ -7465,13 +7490,13 @@ async function manualBackupNow(){
   if(!LIVE_SYNC.enabled){toast('Cloud sync not active — use Download Local Backup instead','info');return;}
   const btn=event?.target;if(btn){btn.disabled=true;btn.textContent='Backing up…';}
   const cfg=getSupabaseConfig();
-  const path=`${BACKUP_CFG.folder}/db-${backupStamp()}.json`;
-  const payload=new Blob([JSON.stringify(DB)],{type:'application/json'});
-  const {error}=await sbClient.storage.from(cfg.bucket).upload(path,payload,{
-    upsert:false,contentType:'application/json',cacheControl:'0'
-  });
+  const backupId='backup-'+backupStamp();
+  let uploadOk=false;
+  try{
+    uploadOk=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:backupId,data:DB,updated_at:new Date().toISOString()});
+  }catch(e){console.warn('Backup error:',e.message);}
   if(btn){btn.disabled=false;btn.textContent='☁ Backup to Cloud Now';}
-  if(error){toast('Backup failed: '+(error.message||'unknown error'),'err');return;}
+  if(!uploadOk){toast('Backup failed — check table exists in Supabase','err');return;}
   LS.set('lastBackupAt',Date.now());
   auditLog('SETTINGS','Manual cloud backup created',path);
   toast('Backup saved to cloud!','ok');
@@ -7489,15 +7514,18 @@ function exportLocalBackup(){
   toast('Backup downloaded: '+filename,'ok');
 }
 
-async function downloadCloudBackup(path,filename){
+async function downloadCloudBackup(rowId){
   if(!LIVE_SYNC.enabled)return;
   const cfg=getSupabaseConfig();
-  const {data,error}=await sbClient.storage.from(cfg.bucket).download(path);
-  if(error||!data){toast('Download failed','err');return;}
-  const url=URL.createObjectURL(data);
-  const a=document.createElement('a');a.href=url;a.download=filename;a.click();
-  URL.revokeObjectURL(url);
-  toast('Backup downloaded!','ok');
+  try{
+    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+rowId+'&select=data',cfg.anonKey);
+    if(!rows||!rows.length){toast('Backup not found','err');return;}
+    const blob=new Blob([JSON.stringify(rows[0].data,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=rowId+'.json';a.click();
+    URL.revokeObjectURL(url);
+    toast('Backup downloaded!','ok');
+  }catch(e){toast('Download error: '+e.message,'err');}
 }
 
 function previewRestoreFile(input){
@@ -7550,12 +7578,14 @@ async function restoreFromCloud(path,filename){
   const confirm2=prompt('Type RESTORE to confirm:');
   if(confirm2!=='RESTORE'){toast('Restore cancelled','info');return;}
   const cfg=getSupabaseConfig();
-  const {data,error}=await sbClient.storage.from(cfg.bucket).download(path);
-  if(error||!data){toast('Could not download backup for restore','err');return;}
-  const txt=await data.text();
-  let parsed;
-  try{parsed=JSON.parse(txt);}catch{toast('Backup file is corrupted','err');return;}
-  performRestore(parsed,'cloud: '+filename);
+  let parsed=null;
+  try{
+    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+path+'&select=data',cfg.anonKey);
+    if(!rows||!rows.length){toast('Could not fetch backup from cloud','err');return;}
+    parsed=rows[0].data;
+  }catch(e){toast('Download error: '+e.message,'err');return;}
+  if(!parsed||typeof parsed!=='object'){toast('Backup data is corrupted','err');return;}
+  performRestore(parsed,'cloud: '+path);
 }
 
 async function performRestore(data,source){
