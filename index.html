@@ -3208,10 +3208,16 @@ async function applyDbGuards(){
 const SESSION_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
 
 function scheduleCloudSave(){
-  if(!LIVE_SYNC.enabled)return;
   if(LIVE_SYNC.pendingTimer)clearTimeout(LIVE_SYNC.pendingTimer);
-  // 1.5 s debounce — coalesces rapid consecutive saves into one upload
-  LIVE_SYNC.pendingTimer=setTimeout(()=>{uploadDbToCloud();},1500);
+  if(LIVE_SYNC.enabled){
+    // Upload immediately — no debounce so closing the tab never loses data
+    LIVE_SYNC.pendingTimer=setTimeout(()=>{ uploadDbToCloud(); },100);
+  }else{
+    // Cloud not ready yet — retry in 3 s (handles race condition on first load)
+    LIVE_SYNC.pendingTimer=setTimeout(()=>{
+      if(LIVE_SYNC.enabled)uploadDbToCloud();
+    },3000);
+  }
 }
 
 /* ═══ CLOUD CONFIG UI ═══════════════════════════════════════ */
@@ -3453,23 +3459,39 @@ async function _applyCloudMerge(cloud){
   toast('Data updated from another session','info');
 }
 async function loadDB(){
-  const s=LS.get('db');
-  if(s)DB=Object.assign({},{...DB,...s});
+  // Step 1 — load local snapshot as baseline
+  const local=LS.get('db');
+  if(local)DB=Object.assign({},{...DB,...local});
   await applyDbGuards();
-  touchDbMeta();
+
+  // Step 2 — connect to cloud
   const cloudReady=await initCloudSync();
   if(cloudReady){
+    // Step 3 — ALWAYS prefer cloud data (it is the source of truth)
     const cloudDb=await pullDbFromCloud();
-    if(cloudDb&&getDbStamp(cloudDb)>=getDbStamp(DB))DB=Object.assign({},DB,cloudDb);
-    else await uploadDbToCloud();
+    if(cloudDb){
+      // Cloud has data — use it regardless of timestamps
+      DB=Object.assign({},DB,cloudDb);
+      await applyDbGuards();
+      LS.set('db',DB); // sync local copy to match cloud
+      toast('Data loaded from cloud','ok');
+    }else{
+      // Cloud is empty — push local data up
+      touchDbMeta();
+      await uploadDbToCloud();
+      toast('Local data backed up to cloud','ok');
+    }
     startCloudPolling();
+  }else{
+    // No cloud — just use local
+    touchDbMeta();
+    LS.set('db',DB);
   }
-  save();
 }
 function save(){
   touchDbMeta();
-  LS.set('db',DB);
-  scheduleCloudSave();
+  LS.set('db',DB);        // always save locally first (instant)
+  scheduleCloudSave();    // then push to cloud (near-instant)
   maybeBackupDb();
 }
 
@@ -3841,6 +3863,8 @@ function _completeLogin(s){
   auditLog('LOGIN','User logged in',null);
   _startIdleWatcher();
   applySettings();initApp();
+  // Force a cloud push after login to ensure any session data is persisted
+  if(LIVE_SYNC.enabled)setTimeout(()=>uploadDbToCloud(),800);
 }
 /* ── Enhanced login with loading state ── */
 function doLoginEnhanced(){
@@ -8002,12 +8026,58 @@ function initApp(){
 
 // Bootstrap on page load
 window.addEventListener('DOMContentLoaded',async()=>{
-  await loadDB();  // MUST be first   populates DB.staff so login works
+  await loadDB();  // MUST be first — populates DB.staff so login works
   APP_READY=true;
   applySettings();
   const params=new URLSearchParams(window.location.search);
   if(params.get('view')&&params.get('pass')){
     checkResultView(); // Secure result view without login
+  }
+});
+
+// Final sync attempt when tab is closed — catches any pending saves
+window.addEventListener('beforeunload',()=>{
+  if(!LIVE_SYNC.enabled)return;
+  // Use sendBeacon for reliable fire-and-forget on tab close
+  const cfg=getSupabaseConfig();
+  const url=cfg.url+'/rest/v1/'+cfg.table;
+  const body=JSON.stringify({id:cfg.rowId||SB_ROW_ID,data:DB,updated_at:new Date().toISOString()});
+  try{
+    navigator.sendBeacon(url+'?apikey='+cfg.anonKey, new Blob([body],{type:'application/json'}));
+  }catch(e){
+    // sendBeacon fallback — synchronous XHR (last resort)
+    try{
+      const x=new XMLHttpRequest();
+      x.open('POST',url,false);
+      x.setRequestHeader('Content-Type','application/json');
+      x.setRequestHeader('apikey',cfg.anonKey);
+      x.setRequestHeader('Authorization','Bearer '+cfg.anonKey);
+      x.setRequestHeader('Prefer','resolution=merge-duplicates');
+      x.send(body);
+    }catch(e2){}
+  }
+});
+
+// Visibility change — push to cloud when user switches back to tab
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&LIVE_SYNC.enabled){
+    // Pull latest from cloud when tab becomes active again
+    pullDbFromCloud().then(cloudDb=>{
+      if(!cloudDb)return;
+      if(cloudDb._meta?.sessionId===SESSION_ID)return;
+      if(getDbStamp(cloudDb)>getDbStamp(DB)){
+        DB=Object.assign({},DB,cloudDb);
+        applyDbGuards().then(()=>{
+          LS.set('db',DB);
+          _safeRefreshCurrentPage();
+          toast('Data refreshed from cloud','info');
+        });
+      }
+    });
+  }
+  if(document.visibilityState==='hidden'&&LIVE_SYNC.enabled){
+    // Push when leaving tab
+    uploadDbToCloud();
   }
 });
 
