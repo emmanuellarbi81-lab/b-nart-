@@ -3207,16 +3207,32 @@ async function applyDbGuards(){
 // Unique ID for this browser tab — stamps our own cloud writes so the poller can ignore them
 const SESSION_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
 
+// FIX Bug 1: robust retry queue — never silently drops a save
+const _saveRetryDelays=[100,500,1500,4000,10000]; // ms between attempts
+let _saveRetryCount=0;
 function scheduleCloudSave(){
   if(LIVE_SYNC.pendingTimer)clearTimeout(LIVE_SYNC.pendingTimer);
+  _saveRetryCount=0;
+  _attemptCloudSave();
+}
+function _attemptCloudSave(){
   if(LIVE_SYNC.enabled){
-    // Upload immediately — no debounce so closing the tab never loses data
+    _saveRetryCount=0;
     LIVE_SYNC.pendingTimer=setTimeout(()=>{ uploadDbToCloud(); },100);
   }else{
-    // Cloud not ready yet — retry in 3 s (handles race condition on first load)
+    // Cloud not ready — keep retrying with backoff
+    const delay=_saveRetryDelays[Math.min(_saveRetryCount,_saveRetryDelays.length-1)];
+    _saveRetryCount++;
     LIVE_SYNC.pendingTimer=setTimeout(()=>{
-      if(LIVE_SYNC.enabled)uploadDbToCloud();
-    },3000);
+      if(LIVE_SYNC.enabled){
+        _saveRetryCount=0;
+        uploadDbToCloud();
+      }else if(_saveRetryCount<=_saveRetryDelays.length){
+        _attemptCloudSave(); // keep retrying
+      }else{
+        console.warn('Cloud save: giving up after all retries — data is local only');
+      }
+    },delay);
   }
 }
 
@@ -3327,17 +3343,24 @@ function toggleShowKey(){
   if(inp.type==='password'){inp.type='text';if(btn)btn.textContent='Hide Key';}
   else{inp.type='password';if(btn)btn.textContent='Show Key';}
 }
+// FIX Bug 2 + Bug 5: stamp _meta only after confirmed success; prevent concurrent uploads
+let _uploadInFlight=false;
 async function uploadDbToCloud(){
   if(!LIVE_SYNC.enabled)return;
-  DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:Date.now()});
+  if(_uploadInFlight)return; // prevent concurrent writes
+  _uploadInFlight=true;
   const cfg=getSupabaseConfig();
+  // Snapshot timestamp intent — do NOT mutate DB until cloud confirms
+  const writeStamp=Date.now();
+  const payload=Object.assign({},DB,{_meta:Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp})});
   try{
-    // PostgREST upsert — CORS-friendly, works with any Supabase key
-    const url=cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId;
-    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:cfg.rowId,data:DB,updated_at:new Date().toISOString()});
-    if(ok)LIVE_SYNC.lastCloudStamp=getDbStamp(DB);
-    else console.warn('Cloud upload: upsert returned not-ok');
+    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:cfg.rowId,data:payload,updated_at:new Date().toISOString()});
+    if(ok){
+      DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp});
+      LIVE_SYNC.lastCloudStamp=writeStamp;
+    }else{console.warn('Cloud upload: upsert returned not-ok');}
   }catch(e){console.warn('Cloud upload error:',e.message);}
+  finally{_uploadInFlight=false;}
 }
 async function pullDbFromCloud(){
   if(!LIVE_SYNC.enabled)return null;
@@ -3449,12 +3472,26 @@ function startCloudPolling(){
 }
 
 async function _applyCloudMerge(cloud){
-  // Merge cloud data into local DB
-  DB=Object.assign({},DB,cloud);
+  // FIX Bug 3: deep-merge arrays by ID so local records are never wiped
+  const ARRAY_KEYS=['patients','orders','invoices','staff','params','packages','scans',
+    'requests','posts','links','expenses','discounts','auditlog','reconciliations','messages'];
+  const merged=Object.assign({},DB,cloud);
+  ARRAY_KEYS.forEach(k=>{
+    const localArr=Array.isArray(DB[k])?DB[k]:[];
+    const cloudArr=Array.isArray(cloud[k])?cloud[k]:[];
+    // Build a map of cloud records keyed by id
+    const cloudMap=new Map(cloudArr.map(r=>[r.id,r]));
+    // Keep all local records, overwrite with cloud version if cloud has the same id
+    const localMapped=localArr.map(r=>cloudMap.has(r.id)?cloudMap.get(r.id):r);
+    const localIds=new Set(localArr.map(r=>r.id));
+    // Append any cloud records that don't exist locally
+    const newFromCloud=cloudArr.filter(r=>!localIds.has(r.id));
+    merged[k]=[...localMapped,...newFromCloud];
+  });
+  DB=merged;
   await applyDbGuards();
   LS.set('db',DB);
   updateBadges();
-  // Refresh only the visible page — no full initApp() reset
   _safeRefreshCurrentPage();
   toast('Data updated from another session','info');
 }
@@ -3492,7 +3529,9 @@ function save(){
   touchDbMeta();
   LS.set('db',DB);        // always save locally first (instant)
   scheduleCloudSave();    // then push to cloud (near-instant)
-  maybeBackupDb();
+  // FIX Bug 5: maybeBackupDb is async — fire separately so it never blocks save()
+  // and cannot race with the main uploadDbToCloud guarded by _uploadInFlight
+  setTimeout(()=>maybeBackupDb(),200);
 }
 
 async function initStaff(){
@@ -8035,17 +8074,28 @@ window.addEventListener('DOMContentLoaded',async()=>{
   }
 });
 
-// Final sync attempt when tab is closed — catches any pending saves
-window.addEventListener('beforeunload',()=>{
+// FIX Bug 4: sendBeacon cannot carry custom headers — Supabase rejects unauthenticated calls.
+// Use fetch with keepalive=true which DOES support headers AND survives tab close in modern browsers.
+// Synchronous XHR kept as last-resort fallback.
+function _flushToCloud(){
   if(!LIVE_SYNC.enabled)return;
-  // Use sendBeacon for reliable fire-and-forget on tab close
   const cfg=getSupabaseConfig();
   const url=cfg.url+'/rest/v1/'+cfg.table;
   const body=JSON.stringify({id:cfg.rowId||SB_ROW_ID,data:DB,updated_at:new Date().toISOString()});
   try{
-    navigator.sendBeacon(url+'?apikey='+cfg.anonKey, new Blob([body],{type:'application/json'}));
+    fetch(url,{
+      method:'POST',
+      keepalive:true, // survives tab/window close
+      headers:{
+        'Content-Type':'application/json',
+        'apikey':cfg.anonKey,
+        'Authorization':'Bearer '+cfg.anonKey,
+        'Prefer':'resolution=merge-duplicates'
+      },
+      body
+    });
   }catch(e){
-    // sendBeacon fallback — synchronous XHR (last resort)
+    // Last-resort synchronous XHR
     try{
       const x=new XMLHttpRequest();
       x.open('POST',url,false);
@@ -8056,7 +8106,9 @@ window.addEventListener('beforeunload',()=>{
       x.send(body);
     }catch(e2){}
   }
-});
+}
+window.addEventListener('pagehide',_flushToCloud); // fires on tab close AND bfcache
+window.addEventListener('beforeunload',_flushToCloud); // belt-and-suspenders fallback
 
 // Visibility change — push to cloud when user switches back to tab
 document.addEventListener('visibilitychange',()=>{
