@@ -3314,12 +3314,14 @@ function updateCloudStatusUI(){
   }
 }
 async function saveCloudConfig(){
+  const ccBtn=document.querySelector('[onclick*="saveCloudConfig"]');
+  const ccH=btnLoad(ccBtn,'Connecting…');
   const url=(document.getElementById('sb-url')?.value||'').trim();
   const key=(document.getElementById('sb-key')?.value||'').trim();
   const bucket=(document.getElementById('sb-bucket')?.value||'bnart-lms').trim();
   const dbpath=(document.getElementById('sb-path')?.value||'live-db.json').trim();
-  if(!url||!key){toast('Please enter both the Supabase URL and anon key','err');return;}
-  if(!url.startsWith('https://')){toast('URL must start with https://','err');return;}
+  if(!url||!key){btnDone(ccBtn,ccH);toast('Please enter both the Supabase URL and anon key','err');return;}
+  if(!url.startsWith('https://')){btnDone(ccBtn,ccH);toast('URL must start with https://','err');return;}
   LS.set('supabaseCfg',{url,anonKey:key,bucket,dbObjectPath:dbpath});
   toast('Cloud credentials saved — connecting...','info');
   if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
@@ -3328,9 +3330,7 @@ async function saveCloudConfig(){
   if(ok){
     const cloudDb=await pullDbFromCloud();
     if(cloudDb&&getDbStamp(cloudDb)>=getDbStamp(DB)){
-      DB=Object.assign({},DB,cloudDb);
-      await applyDbGuards();
-      LS.set('db',DB);
+      await _safeDeepMergeCloud(cloudDb); // FIX: never raw Object.assign
       toast('Cloud data loaded and merged!','ok');
     }else{
       await uploadDbToCloud();
@@ -3340,6 +3340,7 @@ async function saveCloudConfig(){
   }else{
     toast('Connection failed — check your URL and key','err');
   }
+  btnDone(ccBtn,ccH);
   updateCloudStatusUI();
 }
 async function testCloudConnection(){
@@ -3626,6 +3627,30 @@ function save(){
   _setLocalWritePending(); // suppress inbound merges for 5 s
   scheduleCloudSave();    // then push to cloud
   setTimeout(()=>maybeBackupDb(),200);
+}
+
+// ── Universal button loading helpers ─────────────────────────────
+// Usage: const restore = btnLoad(btn, 'Saving…');  then: btnDone(btn, restore);
+const _SPIN='<span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>';
+function btnLoad(btn,label='Saving…'){
+  if(!btn)return null;
+  const orig={html:btn.innerHTML,disabled:btn.disabled};
+  btn.disabled=true;
+  btn.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px">${_SPIN}${label}</span>`;
+  return orig;
+}
+function btnDone(btn,orig){
+  if(!btn||!orig)return;
+  btn.disabled=orig.disabled;
+  btn.innerHTML=orig.html;
+}
+// Convenience: find a button by its onclick text snippet and load it
+function btnLoadByOnclick(snippet,label){
+  const btn=document.querySelector(`[onclick*="${snippet}"]`);
+  return btn?{btn,orig:btnLoad(btn,label)}:null;
+}
+function btnDoneByHandle(handle){
+  if(handle)btnDone(handle.btn,handle.orig);
 }
 
 async function initStaff(){
@@ -4840,7 +4865,7 @@ function enterResults(ordId){
 
   html+=`<div class="fg"><label>Analyst Comment / Interpretation</label><textarea id="res-comment" style="min-height:60px">${ord.comment||''}</textarea></div>`;
   document.getElementById('res-m-b').innerHTML=html;
-  ord.status='In Progress';save();om('m-res');
+  ord.status='In Progress';ord.updatedAt=Date.now();save();om('m-res');
 }
 
 function autoFlagInput(testId,gender){
@@ -5132,14 +5157,17 @@ function placeScan(){
   DB.scans.push(sc);
   const invId=genId('BNL-INV-',DB.nextInv++);
   DB.invoices.push({id:invId,ordId:scId,ptId,ptName:pt.name||'',ptRef:pt.referrer||'',tests:[{name:sc.type,price}],subtotal:price,discount:{type:'none',value:0,amount:0},total:price,paid:0,status:'Unpaid',created:now(),isScan:true});
-  save();cm('m-scan');
-
-  if(mode==='new'){
-    toast(`Patient ${pt.name} registered! Scan ${scId} requested!`);
-  }else{
-    toast(`Scan ${scId} requested!`);
-  }
-  renderScans();updScanStats();
+  sc.updatedAt=Date.now();
+  const scanBtn=document.querySelector('[onclick*="addScan"],[onclick*="saveScan"]');
+  const scanH=btnLoad(scanBtn,'Saving…');
+  save();
+  setTimeout(()=>{
+    btnDone(scanBtn,scanH);
+    cm('m-scan');
+    if(mode==='new'){toast(`Patient ${pt.name} registered! Scan ${scId} requested! ✅`);}
+    else{toast(`Scan ${scId} requested! ✅`);}
+    renderScans();updScanStats();
+  },500);
 }
 let actScId='', currentFilterStat='';
 function renderScans(){
@@ -5338,14 +5366,26 @@ function viewInv(id){
 function recPay(id){
   const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
   const amt=parseFloat(document.getElementById('pay-amt')?.value)||0;
+  if(amt<=0){toast('Enter a valid amount','err');return;}
+  const payBtn=document.getElementById('mpay-btn');
+  const h=btnLoad(payBtn,'Recording…');
   inv.paid=(inv.paid||0)+amt;
   if(inv.paid>=inv.total){inv.paid=inv.total;inv.status='Paid';}else if(inv.paid>0)inv.status='Partial';
+  inv.updatedAt=Date.now();
   if(!inv.paymentHistory)inv.paymentHistory=[];
   inv.paymentHistory.push({amount:amt,date:now(),by:CU?.username});
   auditLog('PAYMENT','GHS '+amt.toFixed(2)+' recorded for '+inv.ptName,inv.id);
-  save();cm('m-inv');renderBill();toast(`GHS ${amt.toFixed(2)} recorded!`);
+  save();
+  setTimeout(()=>{btnDone(payBtn,h);cm('m-inv');renderBill();toast(`GHS ${amt.toFixed(2)} recorded! ✅`);},500);
 }
-function qPay(id){const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;inv.paid=inv.total;inv.status='Paid';save();renderBill();toast('Marked as paid!');}
+function qPay(id){
+  const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
+  const qBtn=document.querySelector(`[onclick*="qPay('${id}')"]`);
+  const qH=btnLoad(qBtn,'Saving…');
+  inv.paid=inv.total;inv.status='Paid';inv.updatedAt=Date.now();
+  save();
+  setTimeout(()=>{btnDone(qBtn,qH);renderBill();toast('Marked as paid! ✅');},500);
+}
 function printInv(){
   const inv=DB.invoices.find(i=>i.id===actInvId);if(!inv)return;
   const cfg=DB.settings;
@@ -5669,30 +5709,22 @@ function saveStaff(){
   if(p&&/^(.)\1+$/.test(p)){toast('Password is too simple — avoid repeated characters','err');return;}
   const existing=DB.staff.find(s=>s.username===u&&s.id!==_editStaffId);
   if(existing){toast('Username already exists','err');return;}
+  const saveBtn=document.querySelector('[onclick*="saveStaff"],[onclick*="addStaff"]');
+  const h=btnLoad(saveBtn,'Saving…');
   if(_editStaffId!==null){
-    // Edit existing
-    const s=DB.staff.find(x=>x.id===_editStaffId);if(!s)return;
-    s.name=n;s.username=u;s.role=role;s.phone=phone;
-    if(p){
-      // Hash new password before storing — save happens after async resolves
-      sha256hex(p).then(hashed=>{s.password=hashed;save();});
-    }
+    const s=DB.staff.find(x=>x.id===_editStaffId);if(!s){btnDone(saveBtn,h);return;}
+    s.name=n;s.username=u;s.role=role;s.phone=phone;s.updatedAt=Date.now();
     s.photo=_staffPhotoData||s.photo||null;
-    toast('Staff member updated!');
     auditLog('STAFF','Staff member updated: '+n,String(_editStaffId));
-  } else {
-    // Add new
+    const finish=()=>{save();setTimeout(()=>{btnDone(saveBtn,h);cm('m-staff');renderStaff();toast('Staff updated! ✅');if(_editStaffId===CU?.id){CU.photo=s.photo;updSbUser();}},500);};
+    if(p){sha256hex(p).then(hashed=>{s.password=hashed;finish();});}else finish();
+  }else{
     sha256hex(p).then(hashed=>{
-      DB.staff.push({id:Date.now(),name:n,username:u,password:hashed,role,phone,photo:_staffPhotoData||null,active:true,created:now()});
-      save();cm('m-staff');renderStaff();
-      toast('Staff member added!');
-      auditLog('STAFF','New staff added: '+n+' ('+role+')',u);
+      DB.staff.push({id:Date.now(),name:n,username:u,password:hashed,role,phone,photo:_staffPhotoData||null,active:true,created:now(),updatedAt:Date.now()});
+      save();
+      setTimeout(()=>{btnDone(saveBtn,h);cm('m-staff');renderStaff();toast('Staff added! ✅');auditLog('STAFF','New staff added: '+n+' ('+role+')',u);},500);
     });
-    return; // async path handles save/close
   }
-  save();cm('m-staff');renderStaff();
-  // Update sidebar avatar if editing self
-  if(_editStaffId===CU?.id){CU.photo=_staffPhotoData||CU.photo||null;updSbUser();}
 }
 
 function addStaff(){saveStaff();} // legacy alias
@@ -5713,7 +5745,7 @@ function printBarcode(id,name){
 function togStaff(id){
   const s=DB.staff.find(x=>x.id===id);if(!s)return;
   if(s.role==='admin'&&DB.staff.filter(x=>x.role==='admin'&&x.active).length<=1&&s.active){toast('Cannot deactivate the only admin','err');return;}
-  s.active=!s.active;save();renderStaff();
+  s.active=!s.active;s.updatedAt=Date.now();save();renderStaff();
 }
 function delStaff(id){
   if(id===CU?.id){toast('Cannot delete yourself','err');return;}
@@ -5773,9 +5805,13 @@ function saveParam(){
     chi:gv('par-ch')!==''?parseFloat(gv('par-ch')):null,
     special:gv('par-sp')
   };
+  p.updatedAt=Date.now();
   if(editParId){const i=DB.params.findIndex(x=>x.id===editParId);if(i>=0)DB.params[i]=p;else DB.params.push(p);}
   else DB.params.push(p);
-  save();cm('m-param');renderParams();toast('Parameter saved!');
+  const paramBtn=document.querySelector('[onclick*="saveParam"]');
+  const h=btnLoad(paramBtn,'Saving…');
+  save();
+  setTimeout(()=>{btnDone(paramBtn,h);cm('m-param');renderParams();toast('Parameter saved! ✅');},500);
 }
 function delParam(id){if(!confirm('Delete this parameter?'))return;DB.params=DB.params.filter(p=>p.id!==id);save();renderParams();}
 
@@ -5879,7 +5915,10 @@ function savePackage(){
     DB.packages.push({id:'pkg_'+Date.now(),name,price,description:desc,params});
     toast('Package saved!');
   }
-  save();resetPkgForm();renderPkgList();editPkgId=null;
+  const pkgBtn=document.querySelector('[onclick*="savePackage"]');
+  const h=btnLoad(pkgBtn,'Saving…');
+  save();
+  setTimeout(()=>{btnDone(pkgBtn,h);resetPkgForm();renderPkgList();editPkgId=null;},500);
 }
 
 /* ═══ SEND REPORT (PDF-FIRST FLOW) ══════════════════════════ */
@@ -6213,22 +6252,21 @@ function saveExpense(){
     created:now()
   };
   
+  exp.updatedAt=Date.now();
   DB.expenses.push(exp);
+  const expBtn=document.querySelector('[onclick*="addExpense"]');
+  const h=btnLoad(expBtn,'Saving…');
   save();
-  cm('m-expense');
-  renderExpenses();
-  toast('Expense recorded successfully!');
+  setTimeout(()=>{btnDone(expBtn,h);cm('m-expense');renderExpenses();toast('Expense recorded! ✅');},500);
 }
 
 function approveExp(id){
-  const exp=DB.expenses.find(e=>e.id===id);
-  if(!exp)return;
-  exp.status='Approved';
-  exp.approvedBy=CU?.username;
-  exp.approvedAt=now();
+  const exp=DB.expenses.find(e=>e.id===id);if(!exp)return;
+  const btn=document.querySelector(`[onclick*="approveExp('${id}')"]`);
+  const h=btnLoad(btn,'Approving…');
+  exp.status='Approved';exp.approvedBy=CU?.username;exp.approvedAt=now();exp.updatedAt=Date.now();
   save();
-  renderExpenses();
-  toast('Expense approved!');
+  setTimeout(()=>{btnDone(btn,h);renderExpenses();toast('Expense approved! ✅');},500);
 }
 
 function deleteExp(id){
@@ -6287,7 +6325,7 @@ function contactReq(id){
 }
 function convertReq(id){
   const r=DB.requests.find(x=>x.id===id);if(!r)return;
-  r.status='Converted';save();
+  r.status='Converted';r.updatedAt=Date.now();save();
   document.getElementById('rn').value=r.name;document.getElementById('rph').value=r.phone;document.getElementById('rwa').value=r.wa||r.phone;document.getElementById('radr').value=r.loc||'';document.getElementById('rnotes').value=r.notes||'';
   gp('reg',qni('reg'));toast('Request loaded into registration form');
 }
@@ -6442,7 +6480,10 @@ function saveSettings(){
   cfg.web=document.getElementById('cfg-web').value;cfg.comm=parseFloat(document.getElementById('cfg-comm').value)||20;
   cfg.waTmpl=document.getElementById('wa-tmpl').value;cfg.smsTmpl=document.getElementById('sms-tmpl')?.value||cfg.smsTmpl||'';cfg.waConf=document.getElementById('wa-conf').value;
   cfg.tat=parseInt(document.getElementById('cfg-tat').value)||4;
-  save();applySettings();toast('Settings saved!');auditLog('SETTINGS','System settings updated',null);
+  const sBtn=document.querySelector('[onclick*="saveSettings"]');
+  const sh=btnLoad(sBtn,'Saving…');
+  save();applySettings();auditLog('SETTINGS','System settings updated',null);
+  setTimeout(()=>{btnDone(sBtn,sh);toast('Settings saved! ✅');},500);
 }
 function applySettings(){
   const s=DB.settings;
@@ -7074,6 +7115,7 @@ function reqNewDisc(){
     created:now(),
     appliedTo:ptId
   };
+  disc.updatedAt=Date.now();
   DB.discounts.push(disc);save();
 
   toast(`Discount of GHS ${discAmt.toFixed(2)} applied!`);
@@ -7087,17 +7129,21 @@ function applyDiscCode(code){
 }
 
 function apprDisc(id){
-  const d=DB.discounts.find(x=>x.id===id);
-  if(!d)return;
-  d.status='Approved';
-  save();renderDisc();updateBadges();toast('Discount approved!');
+  const d=DB.discounts.find(x=>x.id===id);if(!d)return;
+  const btn=document.querySelector(`[onclick*="apprDisc('${id}')"]`);
+  const h=btnLoad(btn,'Approving…');
+  d.status='Approved';d.updatedAt=Date.now();
+  save();
+  setTimeout(()=>{btnDone(btn,h);renderDisc();updateBadges();toast('Discount approved! ✅');},500);
 }
 
 function rejDisc(id){
-  const d=DB.discounts.find(x=>x.id===id);
-  if(!d)return;
-  d.status='Rejected';
-  save();renderDisc();updateBadges();toast('Discount rejected');
+  const d=DB.discounts.find(x=>x.id===id);if(!d)return;
+  const btn=document.querySelector(`[onclick*="rejDisc('${id}')"]`);
+  const h=btnLoad(btn,'Rejecting…');
+  d.status='Rejected';d.updatedAt=Date.now();
+  save();
+  setTimeout(()=>{btnDone(btn,h);renderDisc();updateBadges();toast('Discount rejected.');},500);
 }
 
 function deleteDisc(id){
@@ -7581,6 +7627,8 @@ function renderMsgPanel(){
 
 function sendStaffMsg(){
   if(!CU){toast('Not logged in','err');return;}
+  const msgBtn=document.querySelector('[onclick*="sendStaffMsg"]');
+  const h=btnLoad(msgBtn,'Sending…');
   const body=(document.getElementById('msg-body')?.value||'').trim();
   if(!body){toast('Type a message first','err');return;}
   if(body.length>500){toast('Message too long (max 500 characters)','err');return;}
@@ -7603,21 +7651,15 @@ function sendStaffMsg(){
 
   auditLog('MESSAGE',`Message sent to ${to==='all'?'all staff':to}`+(ordId?' re order '+ordId:''),ordId||null);
   save();
-
-  // Reset compose
-  document.getElementById('msg-body').value='';
-  document.getElementById('msg-urgent').checked=false;
-  const cc=document.getElementById('msg-char-count');if(cc)cc.textContent='0 / 500';
-
-  updateBadges();
-
-  // Switch to appropriate tab to show sent message
-  if(ordId){
-    _msgOrderFilter=ordId;switchMsgTab('order');
-  } else {
-    switchMsgTab('sent');
-  }
-  toast('Message sent!','ok');
+  setTimeout(()=>{
+    btnDone(msgBtn,h);
+    document.getElementById('msg-body').value='';
+    document.getElementById('msg-urgent').checked=false;
+    const cc=document.getElementById('msg-char-count');if(cc)cc.textContent='0 / 500';
+    updateBadges();
+    if(ordId){_msgOrderFilter=ordId;switchMsgTab('order');}else{switchMsgTab('sent');}
+    toast('Message sent! ✅','ok');
+  },400);
 }
 
 function deleteMsg(id){
@@ -7827,6 +7869,8 @@ async function restoreFromCloud(path,filename){
 }
 
 async function performRestore(data,source){
+  const restBtn=document.getElementById('br-restore-btn');
+  const restH=btnLoad(restBtn,'Restoring…');
   // Take a local snapshot of current data before overwriting
   const snapshotKey='pre-restore-backup-'+Date.now();
   try{localStorage.setItem(snapshotKey,JSON.stringify(DB));}catch(e){}
@@ -7835,14 +7879,16 @@ async function performRestore(data,source){
   await applyDbGuards();
   save();
   auditLog('SETTINGS','Database restored from '+source,null);
-  toast('✓ Restore complete! Data has been replaced from backup.','ok');
-  _restoreData=null;
-  document.getElementById('br-file-name').textContent='No file chosen';
-  document.getElementById('br-restore-btn').style.display='none';
-  document.getElementById('br-file-inp').value='';
-  renderBackupUI();
-  // Re-render active page content to reflect restored data
-  if(CU)initApp();
+  setTimeout(()=>{
+    btnDone(restBtn,restH);
+    toast('✓ Restore complete! Data loaded from backup. ✅','ok');
+    _restoreData=null;
+    document.getElementById('br-file-name').textContent='No file chosen';
+    document.getElementById('br-restore-btn').style.display='none';
+    document.getElementById('br-file-inp').value='';
+    renderBackupUI();
+    if(CU)initApp();
+  },600);
 }
 
 /* ═══ AUDIT LOG ═══════════════════════════════════════════════ */
@@ -8059,7 +8105,10 @@ function clearAuditLog(){
   DB.auditlog=[];
   // Add a single entry recording who cleared it
   auditLog('DELETE',`Audit log cleared by ${clearedBy} — ${count} entries removed. Backup: ${filename}`,null);
-  save();renderAuditLog();toast(`Audit log cleared. Backup saved as ${filename}.`);
+  const clrBtn=document.querySelector('[onclick*="clearAuditLog"]');
+  const clrH=btnLoad(clrBtn,'Clearing…');
+  save();
+  setTimeout(()=>{btnDone(clrBtn,clrH);renderAuditLog();toast(`Audit log cleared. Backup saved as ${filename}. ✅`);},500);
 }
 
 // exportAuditLog — replaced by exportAuditLogFiltered (period-aware)
@@ -8125,8 +8174,14 @@ function submitReconcile(){
     created:now()
   });
   auditLog('PAYMENT','Cash reconciliation submitted for '+date,'REC');
-  save();cm('m-reconcile');renderReconcile();
-  toast(Math.abs(variance)<0.01?'Reconciliation submitted — balanced! ✓':'Reconciliation submitted with variance of GHS '+Math.abs(variance).toFixed(2),'ok');
+  const recBtn=document.querySelector('[onclick*="submitReconcile"]');
+  const recH=btnLoad(recBtn,'Submitting…');
+  save();
+  setTimeout(()=>{
+    btnDone(recBtn,recH);
+    cm('m-reconcile');renderReconcile();
+    toast(Math.abs(variance)<0.01?'Reconciliation submitted — balanced! ✅':'Reconciliation submitted with variance of GHS '+Math.abs(variance).toFixed(2),'ok');
+  },500);
 }
 
 function renderReconcile(){
