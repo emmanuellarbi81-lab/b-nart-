@@ -3520,26 +3520,62 @@ function startCloudPolling(){
   },15000);
 }
 
-async function _applyCloudMerge(cloud){
-  // FIX Bug 3: deep-merge arrays by ID so local records are never wiped
-  const ARRAY_KEYS=['patients','orders','invoices','staff','params','packages','scans',
-    'requests','posts','links','expenses','discounts','auditlog','reconciliations','messages'];
+// ── CANONICAL MERGE FUNCTION ────────────────────────────────────────────────
+// _safeDeepMergeCloud(cloud) is the ONE place all cloud data enters DB.
+// Rules:
+//   1. Arrays are merged by record ID — no array is ever wholesale replaced.
+//   2. For same-ID records, the one with the newer `updatedAt` / `completed`
+//      / `modified` timestamp wins — so an approved order cannot be bounced
+//      back to Pending by a stale cloud copy.
+//   3. Counter fields (nextPt, nextOrd, etc.) always take the MAX value so
+//      two users registering simultaneously never generate duplicate IDs.
+//   4. Scalar settings fields prefer cloud (single source of truth for config).
+// ─────────────────────────────────────────────────────────────────────────────
+const _MERGE_ARRAYS=['patients','orders','invoices','staff','params','packages','scans',
+  'requests','posts','links','expenses','discounts','auditlog','reconciliations','messages'];
+const _COUNTER_KEYS=['nextPt','nextOrd','nextInv','nextSc','nextExp','nextDisc'];
+
+function _recordTimestamp(r){
+  // Returns the best available timestamp on a record for conflict resolution
+  return Number(r?.updatedAt||r?.completed||r?.modified||r?.created||0);
+}
+
+async function _safeDeepMergeCloud(cloud){
+  // Start from current local DB for all scalar/settings fields
   const merged=Object.assign({},DB,cloud);
-  ARRAY_KEYS.forEach(k=>{
+
+  // FIX C: merge arrays by ID, picking the NEWER record on conflict
+  _MERGE_ARRAYS.forEach(k=>{
     const localArr=Array.isArray(DB[k])?DB[k]:[];
     const cloudArr=Array.isArray(cloud[k])?cloud[k]:[];
-    // Build a map of cloud records keyed by id
     const cloudMap=new Map(cloudArr.map(r=>[r.id,r]));
-    // Keep all local records, overwrite with cloud version if cloud has the same id
-    const localMapped=localArr.map(r=>cloudMap.has(r.id)?cloudMap.get(r.id):r);
     const localIds=new Set(localArr.map(r=>r.id));
-    // Append any cloud records that don't exist locally
-    const newFromCloud=cloudArr.filter(r=>!localIds.has(r.id));
-    merged[k]=[...localMapped,...newFromCloud];
+
+    const mergedArr=localArr.map(r=>{
+      if(!cloudMap.has(r.id))return r; // local-only record — keep it
+      const cloudRec=cloudMap.get(r.id);
+      // Pick whichever version has the newer timestamp
+      return _recordTimestamp(cloudRec)>=_recordTimestamp(r)?cloudRec:r;
+    });
+
+    // Add cloud records that don't exist locally
+    cloudArr.filter(r=>!localIds.has(r.id)).forEach(r=>mergedArr.push(r));
+    merged[k]=mergedArr;
   });
+
+  // FIX D: counters always take the MAX so IDs never collide
+  _COUNTER_KEYS.forEach(k=>{
+    merged[k]=Math.max(Number(DB[k]||0),Number(cloud[k]||0));
+  });
+
   DB=merged;
   await applyDbGuards();
   LS.set('db',DB);
+  return DB;
+}
+
+async function _applyCloudMerge(cloud){
+  await _safeDeepMergeCloud(cloud);
   updateBadges();
   _safeRefreshCurrentPage();
   toast('Data updated from another session','info');
@@ -3556,10 +3592,8 @@ async function loadDB(){
     // Step 3 — ALWAYS prefer cloud data (it is the source of truth)
     const cloudDb=await pullDbFromCloud();
     if(cloudDb){
-      // Cloud has data — use it regardless of timestamps
-      DB=Object.assign({},DB,cloudDb);
-      await applyDbGuards();
-      LS.set('db',DB); // sync local copy to match cloud
+      // FIX B: use safe deep merge — never raw Object.assign on page load
+      await _safeDeepMergeCloud(cloudDb);
       toast('Data loaded from cloud','ok');
     }else{
       // Cloud is empty — push local data up
@@ -4106,6 +4140,7 @@ function regPt(only=false){
 
   const pid=genId('BNL-',DB.nextPt++);
   const pt={id:pid,name,dob:document.getElementById('rdob').value,age:document.getElementById('rage').value,gender:document.getElementById('rgen').value,phone,wa:document.getElementById('rwa').value||phone,email:document.getElementById('rem').value,addr:document.getElementById('radr').value,emerg:document.getElementById('rec').value,bg:document.getElementById('rbg').value,ref:document.getElementById('rref').value,refType:document.getElementById('rreftype').value,hosp:document.getElementById('rhosp').value,fasting:document.getElementById('rfst').value,notes:document.getElementById('rnotes').value,created:now(),createdBy:CU?.username};
+  pt.updatedAt=Date.now();
   DB.patients.push(pt);
   save(); // write-pending lock set here — blocks poll from overwriting for 5 s
 
@@ -4855,7 +4890,7 @@ function saveResults(markReady){
   ord.enteredBy=CU?.username;
 
   if(markReady===true){
-    ord.status='Ready';ord.completed=now();ord.approvedBy=CU?.username;
+    ord.status='Ready';ord.completed=now();ord.updatedAt=Date.now();ord.approvedBy=CU?.username;
     auditLog('APPROVE','Results approved & marked Ready',ord.id);
     save();
     // FIX: keep write-pending lock alive through the UI transition
@@ -4869,7 +4904,7 @@ function saveResults(markReady){
       setTimeout(()=>gp('rpts',qni('rpts')),350);
     },600);
   } else if(markReady==='pending'){
-    ord.status='Pending Approval';
+    ord.status='Pending Approval';ord.updatedAt=Date.now();
     auditLog('RESULT','Results submitted for approval',ord.id);
     save();
     setTimeout(()=>{_restoreBtns();cm('m-res');toast('Results submitted for approval.');updateBadges();},600);
@@ -8250,17 +8285,15 @@ function _flushToCloud(){
 window.addEventListener('pagehide',_flushToCloud); // fires on tab close AND bfcache
 window.addEventListener('beforeunload',_flushToCloud); // belt-and-suspenders fallback
 
-// Visibility change — push to cloud when user switches back to tab
+// Visibility change — push/pull when user switches tabs
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&LIVE_SYNC.enabled){
-    // Pull latest from cloud when tab becomes active again
+    // FIX A: use _safeDeepMergeCloud() — never raw Object.assign
     pullDbFromCloud().then(cloudDb=>{
       if(!cloudDb)return;
       if(cloudDb._meta?.sessionId===SESSION_ID)return;
       if(getDbStamp(cloudDb)>getDbStamp(DB)){
-        DB=Object.assign({},DB,cloudDb);
-        applyDbGuards().then(()=>{
-          LS.set('db',DB);
+        _safeDeepMergeCloud(cloudDb).then(()=>{
           _safeRefreshCurrentPage();
           toast('Data refreshed from cloud','info');
         });
@@ -8268,8 +8301,7 @@ document.addEventListener('visibilitychange',()=>{
     });
   }
   if(document.visibilityState==='hidden'&&LIVE_SYNC.enabled){
-    // Push when leaving tab
-    uploadDbToCloud();
+    if(!_uploadInFlight)uploadDbToCloud();
   }
 });
 
