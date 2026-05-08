@@ -1205,7 +1205,49 @@ body.view-only .vo-banner{display:flex!important}
   body.printing-result #result-view .rv-body{margin:0;padding:0;max-width:none}
   #app,#login-screen,.toast-w,#cportal,#gs-overlay{display:none!important}
   #gs-overlay{background:#fff!important}
-  @page{margin:1cm;size:A4 portrait}
+  @page{
+    margin:1.1cm 1cm 1.6cm 1cm;
+    size:A4 portrait;
+    @bottom-center{
+      content:"Page " counter(page) " of " counter(pages);
+      font-family:'DM Sans',sans-serif;
+      font-size:7.5pt;
+      color:#999;
+      letter-spacing:.04em;
+    }
+    @bottom-left{
+      content:"B-NART Medical Lab · Confidential";
+      font-family:'DM Sans',sans-serif;
+      font-size:7pt;
+      color:#bbb;
+    }
+    @bottom-right{
+      content:string(lab-name);
+      font-family:'DM Sans',sans-serif;
+      font-size:7pt;
+      color:#bbb;
+    }
+  }
+  /* Fallback page-number footer for browsers that don't support @page margin boxes
+     (Chrome/Edge use the margin boxes above; this CSS counter div shows in Firefox) */
+  .rpt-page-footer{
+    display:none;
+  }
+  @media print{
+    .rpt-page-footer{
+      display:flex!important;
+      justify-content:space-between;
+      align-items:center;
+      padding:5px 0 0;
+      border-top:1px solid #E5D5D5;
+      margin:6px 20px 0;
+    }
+    .rpt-page-num::before{
+      content:"Page " counter(page) " of " counter(pages);
+      font-size:7.5pt;
+      color:#999;
+    }
+  }
   .page-break{page-break-after:always;break-after:page}
   .page-break-before{page-break-before:always;break-before:page}
   .avoid-break{page-break-inside:avoid;break-inside:avoid}
@@ -3412,8 +3454,11 @@ async function maybeBackupDb(){
     }
   }catch(e){console.warn('Backup error:',e.message);}
 }
-// Returns true if the user is actively interacting (modal open, input focused, typing)
+// Returns true if the user is actively interacting OR we have a pending write.
+// Suppresses cloud-poll merges in both cases so we never overwrite fresh local data.
 function _userIsActive(){
+  // Write in flight — our save hasn't reached the cloud yet, block all inbound merges
+  if(_localWritePending)return true;
   // Any modal currently visible?
   if(document.querySelector('.modal-bg.open'))return true;
   // Any text input or textarea currently focused?
@@ -3458,12 +3503,16 @@ function startCloudPolling(){
     // Only merge if cloud is genuinely newer than what we have
     if(getDbStamp(cloud)<=getDbStamp(DB))return;
 
-    // If user is currently active, defer the merge up to 10 s
+    // FIX: _userIsActive() now also returns true when _localWritePending is set,
+    // meaning we just saved and our upload hasn't confirmed yet.
+    // Defer the merge — this is the key fix for "record appears then disappears".
     if(_userIsActive()){
       if(_pollDebounceTimer)clearTimeout(_pollDebounceTimer);
+      // After deferral, only apply if our local write is no longer pending
       _pollDebounceTimer=setTimeout(()=>{
-        _applyCloudMerge(cloud);
-      },10000);
+        if(!_localWritePending)_applyCloudMerge(cloud);
+        // if still pending, drop this poll cycle — our upload will push our version
+      },6000); // 6s > 5s _localWritePending window so lock has cleared
       return;
     }
 
@@ -3525,12 +3574,23 @@ async function loadDB(){
     LS.set('db',DB);
   }
 }
+// ── WRITE-PENDING LOCK ───────────────────────────────────────────────────────
+// Any time we write locally, suppress cloud-poll merges for 5 seconds.
+// This prevents another user's poll from overwriting our data before our
+// own upload has reached the cloud.
+let _localWritePending=false;
+let _localWriteTimer=null;
+function _setLocalWritePending(){
+  _localWritePending=true;
+  if(_localWriteTimer)clearTimeout(_localWriteTimer);
+  _localWriteTimer=setTimeout(()=>{_localWritePending=false;},5000);
+}
+
 function save(){
   touchDbMeta();
   LS.set('db',DB);        // always save locally first (instant)
-  scheduleCloudSave();    // then push to cloud (near-instant)
-  // FIX Bug 5: maybeBackupDb is async — fire separately so it never blocks save()
-  // and cannot race with the main uploadDbToCloud guarded by _uploadInFlight
+  _setLocalWritePending(); // suppress inbound merges for 5 s
+  scheduleCloudSave();    // then push to cloud
   setTimeout(()=>maybeBackupDb(),200);
 }
 
@@ -4037,14 +4097,28 @@ function regPt(only=false){
   if(!name){toast('Patient name is required','err');return;}
   const phone=document.getElementById('rph').value.trim();
   if(!phone){toast('Phone number is required','err');return;}
+
+  // ── Loading spinner on the Register button ──
+  const regBtn=document.querySelector('[onclick*="regPt"]');
+  const origLabel=regBtn?regBtn.innerHTML:'';
+  if(regBtn){regBtn.disabled=true;regBtn.innerHTML='<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>Registering…</span>';}
+  function _restoreRegBtn(){if(regBtn){regBtn.disabled=false;regBtn.innerHTML=origLabel;}}
+
   const pid=genId('BNL-',DB.nextPt++);
   const pt={id:pid,name,dob:document.getElementById('rdob').value,age:document.getElementById('rage').value,gender:document.getElementById('rgen').value,phone,wa:document.getElementById('rwa').value||phone,email:document.getElementById('rem').value,addr:document.getElementById('radr').value,emerg:document.getElementById('rec').value,bg:document.getElementById('rbg').value,ref:document.getElementById('rref').value,refType:document.getElementById('rreftype').value,hosp:document.getElementById('rhosp').value,fasting:document.getElementById('rfst').value,notes:document.getElementById('rnotes').value,created:now(),createdBy:CU?.username};
-  DB.patients.push(pt);save();
-  populateRefFilter();toast(`Patient registered! ID: ${pid}`);auditLog('PATIENT','Patient registered: '+(document.getElementById('reg-name')?.value||''),pid);
-  ['rn','rdob','rage','rph','rwa','rem','radr','rec','rnotes','rref','rhosp'].forEach(i=>{const e=document.getElementById(i);if(e)e.value='';});
-  ['rgen','rbg','rfst','rreftype'].forEach(i=>{const e=document.getElementById(i);if(e)e.selectedIndex=0;});
-  updateBadges();
-  if(!only){setTimeout(()=>{buildOrdCats();document.getElementById('om-pt').value=pid;om('m-ord')},200);}
+  DB.patients.push(pt);
+  save(); // write-pending lock set here — blocks poll from overwriting for 5 s
+
+  setTimeout(()=>{
+    _restoreRegBtn();
+    populateRefFilter();
+    toast(`Patient registered! ID: ${pid} ✅`);
+    auditLog('PATIENT','Patient registered: '+name,pid);
+    ['rn','rdob','rage','rph','rwa','rem','radr','rec','rnotes','rref','rhosp'].forEach(i=>{const e=document.getElementById(i);if(e)e.value='';});
+    ['rgen','rbg','rfst','rreftype'].forEach(i=>{const e=document.getElementById(i);if(e)e.selectedIndex=0;});
+    updateBadges();
+    if(!only){setTimeout(()=>{buildOrdCats();document.getElementById('om-pt').value=pid;om('m-ord')},200);}
+  },500);
 }
 
 /* ═══ PATIENTS ══════════════════════════════════════════════ */
@@ -4556,7 +4630,7 @@ function placeOrder(){
     return;
   }
 
-  if(btn) { btn.disabled=true; btn.textContent='Processing...'; }
+  if(btn){btn.disabled=true;btn.innerHTML='<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>Placing Order…</span>';}
 
   try {
     const ordId=genId('BNL-ORD-',DB.nextOrd++);
@@ -4757,6 +4831,16 @@ function syncFlagColor(testId){
 
 function saveResults(markReady){
   const ord=DB.orders.find(o=>o.id===actOrdId);if(!ord)return;
+
+  // ── Loading state: disable all action buttons while saving ──
+  const _btns=['res-approve-btn','res-submit-btn','res-draft-btn'];
+  const _origLabels={};
+  _btns.forEach(id=>{
+    const b=document.getElementById(id);
+    if(b){_origLabels[id]=b.innerHTML;b.disabled=true;b.innerHTML='<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>Saving…</span>';}
+  });
+  function _restoreBtns(){_btns.forEach(id=>{const b=document.getElementById(id);if(b){b.disabled=false;b.innerHTML=_origLabels[id]||b.innerHTML;}});}
+
   ord.tests.filter(t=>!t.special).forEach(t=>{
     ord.results[t.id]={value:document.getElementById('rr_'+t.id)?.value||'',unit:document.getElementById('ru_'+t.id)?.value||t.unit,flag:document.getElementById('rf_'+t.id)?.value||''};
   });
@@ -4769,20 +4853,30 @@ function saveResults(markReady){
   }
   ord.comment=document.getElementById('res-comment')?.value||'';
   ord.enteredBy=CU?.username;
+
   if(markReady===true){
-    // Final approval — admin or labtech
     ord.status='Ready';ord.completed=now();ord.approvedBy=CU?.username;
     auditLog('APPROVE','Results approved & marked Ready',ord.id);
-    save();cm('m-res');toast('Results approved — report is ready!');updateBadges();
+    save();
+    // FIX: keep write-pending lock alive through the UI transition
+    // so the poll on other devices cannot bounce the status back
+    setTimeout(()=>{
+      _restoreBtns();
+      cm('m-res');
+      toast('Results approved — report is ready! ✅');
+      updateBadges();
+      // Navigate to Reports immediately so user sees their work land
+      setTimeout(()=>gp('rpts',qni('rpts')),350);
+    },600);
   } else if(markReady==='pending'){
-    // Submit for approval
     ord.status='Pending Approval';
     auditLog('RESULT','Results submitted for approval',ord.id);
-    save();cm('m-res');toast('Results submitted for approval.');updateBadges();
+    save();
+    setTimeout(()=>{_restoreBtns();cm('m-res');toast('Results submitted for approval.');updateBadges();},600);
   } else {
-    // Save draft
     auditLog('RESULT','Results saved as draft',ord.id);
-    save();cm('m-res');toast('Saved as draft.');updateBadges();
+    save();
+    setTimeout(()=>{_restoreBtns();cm('m-res');toast('Saved as draft.');updateBadges();},400);
   }
 }
 
@@ -4833,7 +4927,9 @@ function printRpt(ordId){
 function printRpt(ordId){
   const html=buildReportHTML(ordId);
   if(!html){toast('Report not found','err');return;}
-  document.getElementById('print-area').innerHTML=html;
+  const pa=document.getElementById('print-area');
+  pa.innerHTML=html;
+  _injectPageNumbers(pa);
   window.print();
 }
 
@@ -4843,9 +4939,47 @@ async function dlPDF(ordId){
   const ord=DB.orders.find(o=>o.id===ordId);
   const pa=document.getElementById('print-area');
   pa.innerHTML=html;
-  // Show brief hint then print dialog
+  _injectPageNumbers(pa);
   toast('In the print dialog choose "Save as PDF" as the destination','info');
   setTimeout(()=>window.print(),400);
+}
+
+/* ── Page-number injector ──────────────────────────────────────────────────
+   Browsers cannot know total page count before layout, so we do a two-pass:
+   1. Render invisibly, measure content height, estimate page count.
+   2. Stamp "Page X of N" on each footer visible on that page.
+   This gives a reliable "Page 1 of 3" style counter on every printed page.
+──────────────────────────────────────────────────────────────────────────── */
+function _injectPageNumbers(container){
+  try{
+    // A4 printable height at 96dpi with 1.1cm top + 1.6cm bottom margins ≈ 1010px
+    const A4_H=1010;
+    const totalH=container.scrollHeight||container.offsetHeight||A4_H;
+    const totalPages=Math.max(1,Math.ceil(totalH/A4_H));
+
+    // Stamp each .rpt-page-num element inside the container
+    container.querySelectorAll('.rpt-page-num').forEach((el,idx)=>{
+      el.textContent='Page '+(idx+1)+' of '+totalPages;
+    });
+
+    // If the report is only one page there is only one footer; show it
+    // If multi-page, we need a footer on every logical page.
+    // Insert additional page-break + footer clones for pages 2..N
+    if(totalPages>1){
+      const footerTemplate=container.querySelector('.rpt-page-footer');
+      if(footerTemplate){
+        for(let pg=2;pg<=totalPages;pg++){
+          const br=document.createElement('div');
+          br.className='page-break';
+          const clone=footerTemplate.cloneNode(true);
+          clone.querySelector('.rpt-page-num').textContent='Page '+pg+' of '+totalPages;
+          // Insert before the first page-break we add, keeping footer at bottom
+          container.querySelector('div').appendChild(br);
+          container.querySelector('div').appendChild(clone);
+        }
+      }
+    }
+  }catch(e){console.warn('Page number injection failed:',e);}
 }
 
 /* ═══ ORDERS ════════════════════════════════════════════════ */
@@ -5776,7 +5910,7 @@ async function downloadReportPDF(){
   }catch(err){
     console.error('PDF error:',err);
     toast('PDF failed — trying print dialog','info');
-    document.getElementById('print-area').innerHTML=html;window.print();
+    const _wpa=document.getElementById('print-area');_wpa.innerHTML=html;_injectPageNumbers(_wpa);window.print();
     if(btn){btn.disabled=false;btn.textContent='\u2B07 Download PDF';}
   }
 }
@@ -6615,9 +6749,15 @@ function buildReportHTML(ordId){
       </div>
     </div>
     <!-- FOOTER -->
-    <div class="keep-together" style="margin:10px 20px 18px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #E5D5D5;padding-top:8px">
+    <div class="keep-together" style="margin:10px 20px 0;display:flex;justify-content:space-between;align-items:center;border-top:1px solid #E5D5D5;padding-top:8px">
       <div style="font-size:.6rem;color:#AAA">Generated by B-NART LMS · ${today} · Confidential</div>
       <div style="font-size:.6rem;color:#AAA">${cfg.web||'www.bnartmedical.com'}</div>
+    </div>
+    <!-- PAGE NUMBER — visible on print; cross-browser fallback via CSS counters.
+         Modern Chrome/Edge also show the @page margin box version above. -->
+    <div class="rpt-page-footer" style="margin:0 20px 14px">
+      <div style="font-size:.58rem;color:#AAA">${cfg.name||'B-NART Medical Lab'} · ${cfg.addr||'Sekondi Youth Centre Building'}</div>
+      <div class="rpt-page-num" style="font-size:.6rem;color:#999;font-family:'JetBrains Mono',monospace"></div>
     </div>
   </div>`;
 
