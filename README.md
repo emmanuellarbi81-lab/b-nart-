@@ -1,2 +1,2 @@
-# b-nart-
+# b-nart
 lab management system
