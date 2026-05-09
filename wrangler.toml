@@ -1,8 +1,8 @@
 name = "bnart-lms-api"
 main = "src/worker.js"
 compatibility_date = "2024-05-09"
-account_id = "a39f11a77ebe46babb217f873c0a1b8f"
+account_id = "544b1f13127a7831e1bcf173a6c40667"
 
 [[kv_namespaces]]
 binding = "LMS_DATA"
-id = "544b1f13127a7831e1bcf173a6c40667"
+id = "a39f11a77ebe46babb217f873c0a1b8f"
