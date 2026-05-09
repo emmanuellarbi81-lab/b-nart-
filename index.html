@@ -208,32 +208,6 @@ body{
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes spin-global{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-
-/* ─── GLOBAL REFRESH BUTTON (topbar) ──────────────────────── */
-#global-refresh-btn{
-  display:flex;align-items:center;gap:5px;padding:0 11px;height:33px;
-  background:var(--surf);border:1.5px solid var(--bdr);border-radius:8px;
-  font-family:'DM Sans',sans-serif;font-size:.74rem;font-weight:600;
-  color:var(--ink2);cursor:pointer;transition:all .18s;white-space:nowrap;
-  position:relative;overflow:hidden;
-}
-#global-refresh-btn:hover{border-color:var(--r);color:var(--r);background:var(--rl)}
-#global-refresh-btn.is-refreshing{pointer-events:none;opacity:.7}
-#global-refresh-btn .gr-icon{display:inline-block;font-size:13px;transition:transform .2s}
-#global-refresh-btn.is-refreshing .gr-icon{animation:spin-global .6s linear infinite}
-#global-refresh-btn .gr-ts{
-  font-size:.62rem;color:var(--ink4);font-family:'JetBrains Mono',monospace;
-  white-space:nowrap;transition:color .3s;
-}
-#global-refresh-btn.flash-ok .gr-ts{color:var(--grn);font-weight:700}
-/* Dashboard last-updated chip */
-#dash-last-updated{
-  font-size:.63rem;color:var(--ink4);font-family:'JetBrains Mono',monospace;
-  padding:3px 8px;background:var(--surf2);border:1px solid var(--bdr2);
-  border-radius:6px;transition:color .3s;
-}
-#dash-last-updated.flash{color:var(--grn);font-weight:600}
 @keyframes countUp{from{transform:scale(.88);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes shimmer{0%{background-position:-400% 0}100%{background-position:400% 0}}
 @keyframes slideIn{from{transform:translateX(-8px);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -1449,6 +1423,34 @@ body.view-only .vo-banner{display:flex!important}
   animation:pulse 2s ease-in-out infinite;box-shadow:0 0 0 3px rgba(6,95,58,.15);
 }
 
+/* ── Topbar sync status pill ─────────────────────────────────*/
+#tb-sync-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 10px;border-radius:100px;border:1.5px solid;
+  font-size:.64rem;font-weight:700;letter-spacing:.03em;
+  cursor:default;transition:all .3s;white-space:nowrap;
+  font-family:'DM Sans',sans-serif;
+}
+#tb-sync-pill.sync-live{
+  background:var(--grnl);color:var(--grn);border-color:var(--grnb);
+}
+#tb-sync-pill.sync-syncing{
+  background:var(--blul);color:var(--blu);border-color:var(--blub);
+}
+#tb-sync-pill.sync-offline{
+  background:var(--rl);color:var(--r);border-color:var(--rm);
+}
+#tb-sync-pill.sync-error{
+  background:#FFF1F2;color:#BE123C;border-color:#FECDD3;
+}
+#tb-sync-pill .sp-dot{
+  width:6px;height:6px;border-radius:50%;flex-shrink:0;transition:background .3s;
+}
+#tb-sync-pill.sync-live .sp-dot{background:var(--grn);animation:pulse 2s ease-in-out infinite}
+#tb-sync-pill.sync-syncing .sp-dot{background:var(--blu);animation:spin .8s linear infinite;border-radius:0;width:8px;height:8px;border:2px solid var(--blu);border-top-color:transparent;background:transparent}
+#tb-sync-pill.sync-offline .sp-dot{background:var(--r)}
+#tb-sync-pill.sync-error .sp-dot{background:#BE123C}
+
 /* ── Dashboard section headers ───────────────────────────────*/
 .d-sec-hd{
   font-size:.62rem;font-weight:700;letter-spacing:.1em;
@@ -1579,12 +1581,12 @@ body.view-only .vo-banner{display:flex!important}
       <span class="tb-sep"></span>
       <span class="tb-sub">B-NART Medical Lab · Sekondi Youth Centre Building · 0553271127</span>
       <div class="tb-r">
+        <!-- 🔄 Live Sync Status Pill -->
+        <div id="tb-sync-pill" class="sync-offline" title="Cloud sync status">
+          <span class="sp-dot"></span>
+          <span id="tb-sync-label">Connecting…</span>
+        </div>
         <span class="tb-clock" id="tb-clock"></span>
-        <!-- 🔄 Global Refresh Button -->
-        <button id="global-refresh-btn" onclick="globalRefresh(true)" title="Refresh all data (Ctrl+R)">
-          <span class="gr-icon">↻</span>
-          <span class="gr-ts" id="gr-ts">—</span>
-        </button>
         <!-- 🔍 Global Search -->
         <div class="tb-ib" onclick="openGlobalSearch()" title="Search everything (Ctrl+K)" id="gs-trigger" style="display:flex;align-items:center;gap:5px;width:auto;padding:0 10px;min-width:130px;justify-content:flex-start;cursor:pointer">
           <span style="font-size:13px">🔍</span>
@@ -1678,8 +1680,7 @@ body.view-only .vo-banner{display:flex!important}
       <div class="page on" id="page-dash">
         <div class="ph aFadeUp"><div><h2>Dashboard<span class="live-dot" title="Live data"></span></h2><p id="d-greet">Lab overview for today</p></div>
           <div class="ph-act">
-            <span id="dash-last-updated" title="Last refreshed">—</span>
-            <button class="btn btn-o btn-sm" id="dash-refresh-btn" onclick="globalRefresh(true)"><span id="dash-spin-icon">↻</span> Refresh</button>
+            <button class="btn btn-o btn-sm" onclick="refreshDash()">↻ Refresh</button>
             <button class="btn btn-p btn-sm" onclick="gp('reg',qni('reg'))">+ New Patient</button>
           </div>
         </div>
@@ -3312,6 +3313,7 @@ function disconnectCloud(){
   if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
   LIVE_SYNC.enabled=false;
   updateCloudStatusUI();
+  updateSyncPill('offline','Disconnected');
   toast('Cloud sync disconnected — data is local only.');
 }
 // Stamp _meta only after confirmed success; prevent concurrent uploads
@@ -3408,36 +3410,137 @@ function _safeRefreshCurrentPage(){
   }
 }
 
-let _pollDebounceTimer=null;
+/* ═══════════════════════════════════════════════════════════
+   ENHANCED REAL-TIME SYNC ENGINE
+   ─────────────────────────────────────────────────────────
+   Poll interval: 3 seconds (real-time, under 5s target)
+   On new cloud data:
+     1. Deep-merge into local DB (newer timestamp wins)
+     2. Re-render active page safely (skip if modal/input open)
+     3. Update badges + sync pill
+     4. Show subtle toast only on meaningful changes
+═══════════════════════════════════════════════════════════ */
+
+// Track last sync time and last known cloud stamp for the pill
+let _lastSuccessfulSync=null;
+let _syncConsecutiveErrors=0;
+
+/** Update the topbar sync status pill */
+function updateSyncPill(state, label){
+  const pill=document.getElementById('tb-sync-pill');
+  const lbl=document.getElementById('tb-sync-label');
+  if(!pill||!lbl)return;
+  pill.className=''; // reset
+  pill.classList.add('tb-sync-pill'); // keep base id styles
+  // map state to CSS class
+  const cls={live:'sync-live',syncing:'sync-syncing',offline:'sync-offline',error:'sync-error'};
+  pill.id='tb-sync-pill'; // keep id
+  pill.setAttribute('class','');
+  // Apply via inline style switching instead of classList to avoid conflicts
+  const configs={
+    live:{bg:'var(--grnl)',color:'var(--grn)',border:'var(--grnb)'},
+    syncing:{bg:'var(--blul)',color:'var(--blu)',border:'var(--blub)'},
+    offline:{bg:'var(--rl)',color:'var(--r)',border:'var(--rm)'},
+    error:{bg:'#FFF1F2',color:'#BE123C',border:'#FECDD3'},
+  };
+  const cfg=configs[state]||configs.offline;
+  pill.style.background=cfg.bg;
+  pill.style.color=cfg.color;
+  pill.style.borderColor=cfg.border;
+  lbl.textContent=label||state;
+  // dot styling
+  const dot=pill.querySelector('.sp-dot');
+  if(dot){
+    dot.style.animation='';
+    dot.style.border='none';
+    dot.style.borderRadius='50%';
+    dot.style.background=cfg.color;
+    if(state==='live'){dot.style.animation='pulse 2s ease-in-out infinite';}
+    if(state==='syncing'){
+      dot.style.background='transparent';
+      dot.style.border='2px solid '+cfg.color;
+      dot.style.borderTopColor='transparent';
+      dot.style.borderRadius='50%';
+      dot.style.animation='spin .8s linear infinite';
+    }
+  }
+}
+
+/** Also update sidebar status dot + settings panel */
+function updateCloudStatusUI(){
+  const dot=document.getElementById('sb-status-dot');
+  const txt=document.getElementById('sb-status-text');
+  const sub=document.getElementById('sb-status-sub');
+  const ts=_lastSuccessfulSync?_lastSuccessfulSync.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+  if(LIVE_SYNC.enabled){
+    if(dot)dot.style.background='var(--grn)';
+    if(txt)txt.textContent='🟢 Connected — Real-Time Sync Active';
+    if(sub)sub.textContent='All users see data within 3 seconds. Last sync: '+ts;
+    updateSyncPill('live','Live · '+ts);
+  }else{
+    if(dot)dot.style.background='var(--gold)';
+    if(txt)txt.textContent='🟡 Offline — Local Mode';
+    if(sub)sub.textContent='Reconnecting to Cloudflare Worker…';
+    updateSyncPill('offline','Offline');
+  }
+}
 
 function startCloudPolling(){
-  if(!LIVE_SYNC.enabled||LIVE_SYNC.pollTimer)return;
+  if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
+  if(!LIVE_SYNC.enabled)return;
+
   LIVE_SYNC.pollTimer=setInterval(async()=>{
-    const cloud=await pullDbFromCloud();
-    if(!cloud)return;
+    // Show syncing state briefly
+    updateSyncPill('syncing','Syncing…');
 
-    // If the cloud write came from THIS session, it's our own data — ignore
-    if(cloud._meta&&cloud._meta.sessionId&&cloud._meta.sessionId===SESSION_ID)return;
-
-    // Only merge if cloud is genuinely newer than what we have
-    if(getDbStamp(cloud)<=getDbStamp(DB))return;
-
-    // FIX: _userIsActive() now also returns true when _localWritePending is set,
-    // meaning we just saved and our upload hasn't confirmed yet.
-    // Defer the merge — this is the key fix for "record appears then disappears".
-    if(_userIsActive()){
-      if(_pollDebounceTimer)clearTimeout(_pollDebounceTimer);
-      // After deferral, only apply if our local write is no longer pending
-      _pollDebounceTimer=setTimeout(()=>{
-        if(!_localWritePending)_applyCloudMerge(cloud);
-        // if still pending, drop this poll cycle — our upload will push our version
-      },6000); // 6s > 5s _localWritePending window so lock has cleared
+    let cloud=null;
+    try{
+      cloud=await pullDbFromCloud();
+      _syncConsecutiveErrors=0;
+    }catch(e){
+      _syncConsecutiveErrors++;
+      if(_syncConsecutiveErrors>=3){
+        LIVE_SYNC.enabled=false;
+        updateCloudStatusUI();
+        toast('Cloud sync lost — working offline. Will retry…','err');
+        // Auto-retry reconnect after 15s
+        setTimeout(async()=>{
+          const ok=await initCloudSync();
+          if(ok){startCloudPolling();toast('Cloud sync reconnected!','ok');}
+        },15000);
+      }
       return;
     }
 
-    _applyCloudMerge(cloud);
-  },15000);
+    if(!cloud){updateCloudStatusUI();return;}
+
+    // Update sync timestamp regardless
+    _lastSuccessfulSync=new Date();
+
+    // If the cloud write came from THIS session, still update the pill but skip merge
+    if(cloud._meta&&cloud._meta.sessionId&&cloud._meta.sessionId===SESSION_ID){
+      updateCloudStatusUI();return;
+    }
+
+    // Only merge if cloud is genuinely newer than what we have
+    if(getDbStamp(cloud)<=getDbStamp(DB)){updateCloudStatusUI();return;}
+
+    // User is mid-action — defer merge safely
+    if(_userIsActive()){
+      if(_pollDebounceTimer)clearTimeout(_pollDebounceTimer);
+      _pollDebounceTimer=setTimeout(()=>{
+        if(!_localWritePending)_applyCloudMerge(cloud);
+      },6000);
+      updateCloudStatusUI();
+      return;
+    }
+
+    await _applyCloudMerge(cloud);
+
+  },3000); // ← 3-second real-time polling
 }
+
+let _pollDebounceTimer=null;
 
 // ── CANONICAL MERGE FUNCTION ────────────────────────────────────────────────
 // _safeDeepMergeCloud(cloud) is the ONE place all cloud data enters DB.
@@ -3494,12 +3597,43 @@ async function _safeDeepMergeCloud(cloud){
 }
 
 async function _applyCloudMerge(cloud){
+  // Capture counts before merge to detect what changed
+  const before={
+    patients:DB.patients?.length||0,
+    orders:DB.orders?.length||0,
+    invoices:DB.invoices?.length||0,
+    results:(DB.orders||[]).filter(o=>o.status==='Ready').length,
+    scans:DB.scans?.length||0,
+  };
+
   await _safeDeepMergeCloud(cloud);
+
+  // Detect what actually changed
+  const changes=[];
+  if((DB.patients?.length||0)>before.patients) changes.push(`${(DB.patients?.length||0)-before.patients} new patient${(DB.patients?.length||0)-before.patients>1?'s':''}`);
+  if((DB.orders?.length||0)>before.orders) changes.push(`${(DB.orders?.length||0)-before.orders} new order${(DB.orders?.length||0)-before.orders>1?'s':''}`);
+  const newReady=(DB.orders||[]).filter(o=>o.status==='Ready').length;
+  if(newReady>before.results) changes.push(`${newReady-before.results} result${newReady-before.results>1?'s':''} ready`);
+  if((DB.invoices?.length||0)>before.invoices) changes.push(`${(DB.invoices?.length||0)-before.invoices} new invoice${(DB.invoices?.length||0)-before.invoices>1?'s':''}`);
+  if((DB.scans?.length||0)>before.scans) changes.push(`${(DB.scans?.length||0)-before.scans} new scan${(DB.scans?.length||0)-before.scans>1?'s':''}`);
+
+  // Update sync timestamp and pill
+  _lastSuccessfulSync=new Date();
+  updateCloudStatusUI();
   updateBadges();
+
+  // Re-render the currently active page safely
   _safeRefreshCurrentPage();
-  toast('Data updated from another session','info');
+
+  // Show toast only if something meaningful changed
+  if(changes.length>0){
+    toast('🔄 Updated: '+changes.join(', '),'info');
+  }
 }
 async function loadDB(){
+  // Show connecting state immediately
+  updateSyncPill('syncing','Connecting…');
+
   // Step 1 — load local snapshot as baseline
   const local=LS.get('db')||LS.get('db_last_good');
   if(local)DB=Object.assign({},{...DB,...local});
@@ -3508,23 +3642,29 @@ async function loadDB(){
   // Step 2 — connect to cloud
   const cloudReady=await initCloudSync();
   if(cloudReady){
+    updateSyncPill('syncing','Loading cloud…');
     // Step 3 — ALWAYS prefer cloud data (it is the source of truth)
     const cloudDb=await pullDbFromCloud();
     if(cloudDb){
       // FIX B: use safe deep merge — never raw Object.assign on page load
       await _safeDeepMergeCloud(cloudDb);
+      _lastSuccessfulSync=new Date();
       toast('Data loaded from cloud','ok');
     }else{
       // Cloud is empty — push local data up
       touchDbMeta();
       await uploadDbToCloud();
+      _lastSuccessfulSync=new Date();
       toast('Local data backed up to cloud','ok');
     }
-    startCloudPolling();
+    startCloudPolling(); // ← 3-second real-time polling starts here
+    updateCloudStatusUI();
   }else{
     // No cloud — just use local
     touchDbMeta();
     LS.set('db',DB);
+    updateSyncPill('offline','Offline — Local Only');
+    toast('Working offline — cloud unavailable','err');
   }
 }
 // ── WRITE-PENDING LOCK ───────────────────────────────────────────────────────
@@ -4020,8 +4160,6 @@ function gp(id,el){
   if(el)el.classList.add('on');
   document.getElementById('tb-title').textContent=TTLS[id]||id;
   const fns={dash:refreshDash,pts:renderPts,ords:renderOrds,res:renderResList,rpts:renderRpts,scans:renderScans,bill:renderBill,expenses:renderExpenses,analytics:renderAnalytics,staff:renderStaff,params:renderParams,social:renderSocial,reqs:renderReqs,discounts:renderDisc,auditlog:renderAuditLog,reconcile:renderReconcile,settings:()=>{renderBackupUI();renderSecurityStatus();loadCloudConfigUI();const dark=document.documentElement.getAttribute('data-theme')==='dark';const st=document.getElementById('dm-toggle-settings');if(st)st.checked=dark;const sys=document.getElementById('dm-system');if(sys)sys.checked=localStorage.getItem('bnart-theme-system')==='1';}};
-  // Reload localStorage + render on every tab switch (multi-user sync)
-  _syncFromLocalStorage();
   fns[id]?.();
 }
 const qni=p=>document.querySelector(`.ni[data-p="${p}"]`);
@@ -8219,154 +8357,6 @@ function initDarkMode(){
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   GLOBAL AUTO-REFRESH ENGINE
-   ─────────────────────────────────────────────────────────
-   Refresh intervals (per page tier):
-     • Critical  — Orders (ords), Results (res)          → 15 s
-     • Dashboard — dash                                  → 30 s
-     • Standard  — all other pages                       → 60 s
-
-   Triggers:
-     1. Timer fires → silently refresh whichever page is active
-     2. Tab switch  → _syncFromLocalStorage() + render (in gp())
-     3. Manual      → globalRefresh(true) via topbar button / dash btn
-
-   Safety:
-     • Skips if a modal is open (user is mid-action)
-     • Skips if a form input is focused
-     • Never runs before the user is logged in (CU === null)
-═══════════════════════════════════════════════════════════ */
-
-const _REFRESH_TIERS={
-  ords:15000, res:15000,                    // critical  — 15 s
-  dash:30000,                               // dashboard — 30 s
-  pts:60000, rpts:60000, scans:60000,       // standard  — 60 s
-  bill:60000, expenses:60000, analytics:60000,
-  staff:60000, params:60000, social:60000,
-  reqs:60000, discounts:60000, auditlog:60000,
-  reconcile:60000
-};
-
-let _autoRefreshTimer=null;
-let _lastRefreshTs=null;          // ISO timestamp of last successful refresh
-
-/** Pull latest data from localStorage into DB (local multi-user sync) */
-function _syncFromLocalStorage(){
-  try{
-    const saved=LS.get('db');
-    if(saved)DB=Object.assign({},DB,saved);
-  }catch(e){console.warn('LS sync error:',e);}
-}
-
-/** Detect if user is busy — skip refresh if so */
-function _userIsBusy(){
-  if(!CU)return true;                                         // not logged in
-  if(document.querySelector('.modal-bg.open'))return true;    // modal open
-  const ae=document.activeElement;
-  if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'))return true;
-  return false;
-}
-
-/** Get the page key that is currently visible */
-function _activePageKey(){
-  const p=document.querySelector('.page.on');
-  return p?p.id.replace('page-',''):null;
-}
-
-/** Format HH:MM:SS for display */
-function _fmtTime(d){
-  return d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-}
-
-/** Update the topbar "last refreshed" timestamp and flash it green */
-function _updateRefreshTs(){
-  const now=new Date();
-  _lastRefreshTs=now;
-  const ts=_fmtTime(now);
-  // Topbar button timestamp
-  const grTs=document.getElementById('gr-ts');
-  if(grTs)grTs.textContent=ts;
-  // Dashboard chip
-  const chip=document.getElementById('dash-last-updated');
-  if(chip){chip.textContent='Updated '+ts;chip.classList.add('flash');setTimeout(()=>chip.classList.remove('flash'),1800);}
-  // Flash topbar button green briefly
-  const btn=document.getElementById('global-refresh-btn');
-  if(btn){btn.classList.add('flash-ok');setTimeout(()=>btn.classList.remove('flash-ok'),1600);}
-}
-
-/** Core refresh: reload localStorage, render active page, update timestamp */
-function _executeRefresh(isManual){
-  _syncFromLocalStorage();
-  const page=_activePageKey();
-  if(!page)return;
-
-  // Run the renderer for the active page
-  const fn=PAGE_RENDERERS[page];
-  if(typeof fn==='function'){
-    try{fn();}catch(e){console.warn('Refresh render error ['+page+']:',e);}
-  }
-  // Always refresh badges regardless of active page
-  updateBadges();
-  _updateRefreshTs();
-  if(isManual){
-    toast('Data refreshed ✓','ok');
-  }
-}
-
-/**
- * Public entry point — called by topbar button, dash button, Ctrl+R
- * isManual=true  → show toast
- * isManual=false → silent (auto-timer)
- */
-function globalRefresh(isManual){
-  const btn=document.getElementById('global-refresh-btn');
-  const dashBtn=document.getElementById('dash-spin-icon');
-  // Show spinner
-  if(btn)btn.classList.add('is-refreshing');
-  if(dashBtn)dashBtn.style.animation='spin-global .6s linear infinite';
-  // Small delay so spinner is visible, then do the work
-  setTimeout(()=>{
-    _executeRefresh(!!isManual);
-    if(btn)btn.classList.remove('is-refreshing');
-    if(dashBtn)dashBtn.style.animation='';
-  }, 130);
-}
-
-/**
- * Auto-timer tick — called every second by a single master interval.
- * Uses per-page intervals: checks elapsed time since last refresh
- * and fires when the threshold for the current page is met.
- */
-let _lastAutoRefresh=Date.now();
-function _autoRefreshTick(){
-  if(_userIsBusy())return;
-  const page=_activePageKey();
-  if(!page)return;
-  const interval=_REFRESH_TIERS[page]||60000;
-  const elapsed=Date.now()-_lastAutoRefresh;
-  if(elapsed>=interval){
-    _lastAutoRefresh=Date.now();
-    globalRefresh(false); // silent
-  }
-}
-
-/** Start the master auto-refresh ticker (1 s resolution is fine) */
-function startAutoRefresh(){
-  if(_autoRefreshTimer)clearInterval(_autoRefreshTimer);
-  _autoRefreshTimer=setInterval(_autoRefreshTick, 1000);
-}
-
-/** Ctrl+R / Cmd+R shortcut — prevent page reload, refresh data instead */
-document.addEventListener('keydown',e=>{
-  if((e.ctrlKey||e.metaKey)&&e.key==='r'&&CU){
-    e.preventDefault();
-    globalRefresh(true);
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════ */
-
 /* ═══ INIT ══════════════════════════════════════════════════ */
 function initApp(){
   initDarkMode();
@@ -8376,10 +8366,8 @@ function initApp(){
   refreshDash();
   checkResultView();
   updateBadges();
-  startAutoRefresh();          // ← global auto-refresh engine
-  _updateRefreshTs();          // ← seed the timestamp immediately
-  // Update cloud status badge after DB load
-  setTimeout(updateCloudStatusUI, 500);
+  // Update sync pill and sidebar status immediately
+  updateCloudStatusUI();
 }
 
 // Bootstrap on page load
