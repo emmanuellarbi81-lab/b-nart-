@@ -8,15 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script>
-window.SUPABASE_CONFIG={
-  url:'https://vcoufttkvrxeqzckijtu.supabase.co',
-  anonKey:'sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W',
-  bucket:'bnart-lms',
-  dbObjectPath:'live-db.json'
-};
-</script>
+<!-- No Supabase script needed — using Cloudflare Worker -->
 
 <style>
 /*═══════════════════════════════════════════════════════════════
@@ -2357,54 +2349,34 @@ B-NART Lab · 0553271127</textarea></div>
           </div>
 
           <div id="br-no-cloud" style="font-size:.75rem;color:var(--ink3);padding:.5rem 0">
-            Cloud sync not active — connect Supabase in the config below to enable cloud backups.
+            Cloud sync not active — enable the Cloudflare Worker to sync data across devices.
           </div>
         </div>
 
-        <!-- ══ SUPABASE CLOUD SYNC CONFIG ══════════════════════ -->
+        <!-- ══ CLOUDFLARE WORKER CLOUD SYNC STATUS ═══════════════ -->
         <div class="card cb mt1" style="margin-top:1.2rem;border-left:4px solid var(--blu)">
-          <div class="fsec" style="color:var(--blu)">☁ Supabase Cloud Sync</div>
+          <div class="fsec" style="color:var(--blu)">☁ Cloudflare Worker Cloud Sync</div>
 
           <!-- Status indicator -->
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:1.1rem;padding:.75rem 1rem;background:var(--blul);border:1px solid var(--blub);border-radius:var(--rad)">
             <div id="sb-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--ink4);flex-shrink:0;transition:background .3s"></div>
             <div>
-              <div style="font-size:.79rem;font-weight:600;color:var(--ink)" id="sb-status-text">Not configured</div>
-              <div style="font-size:.68rem;color:var(--ink3);margin-top:1px" id="sb-status-sub">Enter your Supabase project URL and anon key below, then click Save & Connect.</div>
+              <div style="font-size:.79rem;font-weight:600;color:var(--ink)" id="sb-status-text">Checking…</div>
+              <div style="font-size:.68rem;color:var(--ink3);margin-top:1px" id="sb-status-sub">Connecting to the Cloudflare Worker endpoint automatically.</div>
             </div>
             <button class="btn btn-o btn-sm" style="margin-left:auto;flex-shrink:0" onclick="testCloudConnection()">Test Connection</button>
           </div>
 
-          <div class="g2 mb1">
-            <div class="fg">
-              <label>Supabase Project URL</label>
-              <input id="sb-url" type="url" placeholder="https://xxxxxxxxxxxx.supabase.co" autocomplete="off" style="font-family:'JetBrains Mono',monospace;font-size:.78rem">
-            </div>
-            <div class="fg">
-              <label>Supabase Anon / Public Key</label>
-              <input id="sb-key" type="password" placeholder="eyJhbGciOiJIUzI1NiIsIn…" autocomplete="off" style="font-family:'JetBrains Mono',monospace;font-size:.78rem">
-            </div>
-          </div>
-          <!-- bucket/path no longer needed — using PostgREST table -->
-
           <div style="background:var(--surf2);border:1px solid var(--bdr2);border-radius:var(--rad);padding:.85rem;margin-bottom:1rem;font-size:.73rem;color:var(--ink3);line-height:1.7">
-            <strong style="color:var(--blu)">One-time setup (30 seconds):</strong><br>
-            1. In your Supabase dashboard go to <strong>SQL Editor</strong> and run this query:<br>
-            <code style="display:block;background:var(--bdr2);padding:6px 10px;border-radius:5px;margin:5px 0;font-size:.72rem;line-height:1.6">CREATE TABLE IF NOT EXISTS bnart_db (
-  id TEXT PRIMARY KEY,
-  data JSONB,
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE bnart_db ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "public_all" ON bnart_db FOR ALL USING (true) WITH CHECK (true);</code>
-            2. Your URL and key are already filled in. Click <strong>Save & Connect</strong>.<br>
-            3. The LMS syncs automatically on every save — works across all devices and browsers.
+            <strong style="color:var(--blu)">How it works:</strong><br>
+            This LMS syncs data via a <strong>Cloudflare Worker</strong> at:<br>
+            <code style="display:block;background:var(--bdr2);padding:6px 10px;border-radius:5px;margin:5px 0;font-size:.72rem;letter-spacing:.02em">https://bnart-lms-api.emmanuellarbi81.workers.dev</code>
+            No configuration needed — sync activates automatically on page load. Data is saved locally and pushed to the Worker on every change. All devices sharing this Worker URL stay in sync automatically.
           </div>
 
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-blu" onclick="saveCloudConfig()">☁ Save & Connect</button>
+            <button class="btn btn-blu" onclick="testCloudConnection()">☁ Test Connection</button>
             <button class="btn btn-o" onclick="disconnectCloud()">Disconnect</button>
-            <button class="btn btn-o btn-sm" id="sb-show-key-btn" onclick="toggleShowKey()">👁 Show Key</button>
           </div>
         </div>
       </div>
@@ -3196,42 +3168,32 @@ const LS={
   get:k=>{try{return JSON.parse(localStorage.getItem('bnart4_'+k))}catch{return null}},
   set:(k,v)=>localStorage.setItem('bnart4_'+k,JSON.stringify(v))
 };
-/* ── Supabase config — uses PostgREST (REST API) which has full CORS support ── */
-const SUPABASE_URL='https://vcoufttkvrxeqzckijtu.supabase.co';
-const SUPABASE_KEY='sb_publishable_FE2qH0ZzeQv69z-HiumE2w_f6Oq4G6W';
-const SB_TABLE='bnart_db';   // Postgres table name (create once, see instructions)
-const SB_ROW_ID='main';      // single-row id for the whole DB blob
+const LOCAL_DB_PRIMARY_KEY='bnart4_db';
+const LOCAL_DB_LASTGOOD_KEY='bnart4_db_last_good';
+
+/* ── Cloudflare Worker endpoint (replaces Supabase) ── */
+const WORKER_URL='https://bnart-lms-api.emmanuellarbi81.workers.dev';
 
 const LIVE_SYNC={enabled:false,pendingTimer:null,pollTimer:null,lastCloudStamp:0};
 const BACKUP_CFG={minIntervalMs:6*60*60*1000,keep:50};
-let sbClient=null;
 let APP_READY=false;
 let DB={patients:[],orders:[],invoices:[],staff:[],params:[],packages:[],scans:[],requests:[],posts:[],links:[],expenses:[],discounts:[],auditlog:[],reconciliations:[],messages:[],
   settings:{name:'B-NART Medical Lab',addr:'Sekondi Youth Centre Building',phone:'0553271127',email:'lab@bnartmedical.com',web:'www.bnartmedical.com',comm:20,logo:'',tat:4,waTmpl:'Dear {name}, your B-NART Medical Lab results are ready.\\nView securely: {link}\\nPassword: {pass}\\nValid for 48 hours.\\nB-NART Lab · 0553271127',waConf:'Dear {name}, your lab tests have been registered at B-NART Medical Lab.\\nOrder ID: {ordId}\\nTests: {tests}\\nResults ready in {hours} hours. We will notify you.\\nB-NART Lab · 0553271127'},
   nextPt:1,nextOrd:1,nextInv:1,nextSc:1,nextExp:1,nextDisc:1
 };
 
-function getSupabaseConfig(){
-  // Allow runtime override from Settings UI or window global
-  const saved=LS.get('supabaseCfg')||{};
-  return {
-    url:(saved.url||window.SUPABASE_CONFIG?.url||SUPABASE_URL).trim(),
-    anonKey:(saved.anonKey||window.SUPABASE_CONFIG?.anonKey||SUPABASE_KEY).trim(),
-    table:SB_TABLE,
-    rowId:SB_ROW_ID
-  };
-}
-/* ── low-level PostgREST helpers ── */
-function _sbHeaders(key){
-  return {'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=minimal'};
-}
-async function _sbGet(url,key){
-  const r=await fetch(url,{headers:{'apikey':key,'Authorization':'Bearer '+key,'Accept':'application/json'},cache:'no-store'});
+/* ── Cloudflare Worker helpers (replaces PostgREST / Supabase helpers) ── */
+async function _workerGet(){
+  const r=await fetch(WORKER_URL+'/api/db',{cache:'no-store'});
   if(!r.ok)return null;
   return r.json();
 }
-async function _sbUpsert(url,key,body){
-  const r=await fetch(url,{method:'POST',headers:{..._sbHeaders(key),'Prefer':'resolution=merge-duplicates'},body:JSON.stringify(body)});
+async function _workerPut(payload){
+  const r=await fetch(WORKER_URL+'/api/db',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
   return r.ok;
 }
 function getDbStamp(db){return Number(db?._meta?.updatedAt||0);}
@@ -3260,15 +3222,19 @@ function scheduleCloudSave(){
 function _attemptCloudSave(){
   if(LIVE_SYNC.enabled){
     _saveRetryCount=0;
-    LIVE_SYNC.pendingTimer=setTimeout(()=>{ uploadDbToCloud(); },100);
+    LIVE_SYNC.pendingTimer=setTimeout(async()=>{
+      LIVE_SYNC.pendingTimer=null;
+      await uploadDbToCloud();
+    },100);
   }else{
     // Cloud not ready — keep retrying with backoff
     const delay=_saveRetryDelays[Math.min(_saveRetryCount,_saveRetryDelays.length-1)];
     _saveRetryCount++;
-    LIVE_SYNC.pendingTimer=setTimeout(()=>{
+    LIVE_SYNC.pendingTimer=setTimeout(async()=>{
+      LIVE_SYNC.pendingTimer=null;
       if(LIVE_SYNC.enabled){
         _saveRetryCount=0;
-        uploadDbToCloud();
+        await uploadDbToCloud();
       }else if(_saveRetryCount<=_saveRetryDelays.length){
         _attemptCloudSave(); // keep retrying
       }else{
@@ -3278,17 +3244,8 @@ function _attemptCloudSave(){
   }
 }
 
-/* ═══ CLOUD CONFIG UI ═══════════════════════════════════════ */
+/* ═══ CLOUD CONFIG UI (Cloudflare Worker) ════════════════════ */
 function loadCloudConfigUI(){
-  const cfg=getSupabaseConfig();
-  const urlEl=document.getElementById('sb-url');
-  const keyEl=document.getElementById('sb-key');
-  const bucketEl=document.getElementById('sb-bucket');
-  const pathEl=document.getElementById('sb-path');
-  if(urlEl)urlEl.value=cfg.url||'';
-  if(keyEl)keyEl.value=cfg.anonKey||'';
-  if(bucketEl)bucketEl.value=cfg.bucket||'bnart-lms';
-  if(pathEl)pathEl.value=cfg.dbObjectPath||'live-db.json';
   updateCloudStatusUI();
 }
 function updateCloudStatusUI(){
@@ -3299,134 +3256,68 @@ function updateCloudStatusUI(){
   if(LIVE_SYNC.enabled){
     dot.style.background='var(--grn)';
     if(txt)txt.textContent='Connected — Cloud Sync Active';
-    if(sub)sub.textContent='Data is being synced to Supabase automatically on every save.';
+    if(sub)sub.textContent='Data is being synced to the Cloudflare Worker automatically on every save.';
   }else{
-    const cfg=getSupabaseConfig();
-    if(cfg.url&&cfg.anonKey){
-      dot.style.background='var(--gold)';
-      if(txt)txt.textContent='Credentials saved but not yet connected';
-      if(sub)sub.textContent='Click Test Connection or reload the page to activate sync.';
-    }else{
-      dot.style.background='var(--ink4)';
-      if(txt)txt.textContent='Not configured';
-      if(sub)sub.textContent='Enter your Supabase project URL and anon key below, then click Save & Connect.';
-    }
+    dot.style.background='var(--gold)';
+    if(txt)txt.textContent='Connecting to Cloudflare Worker…';
+    if(sub)sub.textContent='Reload the page if sync does not activate within a few seconds.';
   }
-}
-async function saveCloudConfig(){
-  const ccBtn=document.querySelector('[onclick*="saveCloudConfig"]');
-  const ccH=btnLoad(ccBtn,'Connecting…');
-  const url=(document.getElementById('sb-url')?.value||'').trim();
-  const key=(document.getElementById('sb-key')?.value||'').trim();
-  const bucket=(document.getElementById('sb-bucket')?.value||'bnart-lms').trim();
-  const dbpath=(document.getElementById('sb-path')?.value||'live-db.json').trim();
-  if(!url||!key){btnDone(ccBtn,ccH);toast('Please enter both the Supabase URL and anon key','err');return;}
-  if(!url.startsWith('https://')){btnDone(ccBtn,ccH);toast('URL must start with https://','err');return;}
-  LS.set('supabaseCfg',{url,anonKey:key,bucket,dbObjectPath:dbpath});
-  toast('Cloud credentials saved — connecting...','info');
-  if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
-  LIVE_SYNC.enabled=false;sbClient=null;
-  const ok=await initCloudSync();
-  if(ok){
-    const cloudDb=await pullDbFromCloud();
-    if(cloudDb&&getDbStamp(cloudDb)>=getDbStamp(DB)){
-      await _safeDeepMergeCloud(cloudDb); // FIX: never raw Object.assign
-      toast('Cloud data loaded and merged!','ok');
-    }else{
-      await uploadDbToCloud();
-      toast('Current data pushed to cloud!','ok');
-    }
-    startCloudPolling();
-  }else{
-    toast('Connection failed — check your URL and key','err');
-  }
-  btnDone(ccBtn,ccH);
-  updateCloudStatusUI();
 }
 async function testCloudConnection(){
-  const urlInp=(document.getElementById('sb-url')?.value||'').trim();
-  const keyInp=(document.getElementById('sb-key')?.value||'').trim();
-  const cfg=getSupabaseConfig();
-  const testUrl=urlInp||cfg.url;
-  const testKey=keyInp||cfg.anonKey;
-  if(!testUrl||!testKey){toast('Enter URL and anon key first','err');return;}
-  toast('Testing connection...','info');
+  toast('Testing Cloudflare Worker connection…','info');
   try{
-    // Hit PostgREST root — always works with a valid project URL + key
-    const r=await fetch(testUrl+'/rest/v1/',{headers:{'apikey':testKey,'Authorization':'Bearer '+testKey}});
-    if(r.ok||r.status===200){
-      toast('Connected to Supabase! Now checking table...','ok');
-      // Check if table exists
-      const rows=await _sbGet(testUrl+'/rest/v1/'+SB_TABLE+'?select=id&limit=1',testKey);
-      if(rows===null){
-        toast('Connected but table "'+SB_TABLE+'" not found — please create it (see instructions below).','err');
-      }else{
-        toast('All good! Supabase connected and table "'+SB_TABLE+'" ready.','ok');
-      }
+    const r=await fetch(WORKER_URL+'/api/db');
+    if(r.ok){
+      toast('Cloudflare Worker is reachable and ready!','ok');
+      updateCloudStatusUI();
     }else{
-      const t=await r.text();
-      toast('Server responded: '+r.status+' — '+t.slice(0,100),'err');
+      toast('Worker responded: '+r.status+' — check your Worker URL','err');
     }
   }catch(e){toast('Connection error: '+e.message,'err');}
 }
 function disconnectCloud(){
   if(!confirm('Disconnect cloud sync? Your local data will be preserved.'))return;
   if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
-  LIVE_SYNC.enabled=false;sbClient=null;
-  LS.set('supabaseCfg',{url:'',anonKey:'',bucket:'bnart-lms',dbObjectPath:'live-db.json'});
-  const keyEl=document.getElementById('sb-key');if(keyEl)keyEl.value='';
-  const urlEl=document.getElementById('sb-url');if(urlEl)urlEl.value='';
+  LIVE_SYNC.enabled=false;
   updateCloudStatusUI();
-  toast('Cloud sync disconnected.');
+  toast('Cloud sync disconnected — data is local only.');
 }
-function toggleShowKey(){
-  const inp=document.getElementById('sb-key');
-  const btn=document.getElementById('sb-show-key-btn');
-  if(!inp)return;
-  if(inp.type==='password'){inp.type='text';if(btn)btn.textContent='Hide Key';}
-  else{inp.type='password';if(btn)btn.textContent='Show Key';}
-}
-// FIX Bug 2 + Bug 5: stamp _meta only after confirmed success; prevent concurrent uploads
+// Stamp _meta only after confirmed success; prevent concurrent uploads
 let _uploadInFlight=false;
 async function uploadDbToCloud(){
-  if(!LIVE_SYNC.enabled)return;
-  if(_uploadInFlight)return; // prevent concurrent writes
+  if(!LIVE_SYNC.enabled)return false;
+  if(_uploadInFlight)return false; // prevent concurrent writes
   _uploadInFlight=true;
-  const cfg=getSupabaseConfig();
   // Snapshot timestamp intent — do NOT mutate DB until cloud confirms
   const writeStamp=Date.now();
   const payload=Object.assign({},DB,{_meta:Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp})});
+  let ok=false;
   try{
-    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:cfg.rowId,data:payload,updated_at:new Date().toISOString()});
+    ok=await _workerPut(payload);
     if(ok){
       DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp});
       LIVE_SYNC.lastCloudStamp=writeStamp;
-    }else{console.warn('Cloud upload: upsert returned not-ok');}
+    }else{console.warn('Cloud upload: Worker returned not-ok');}
   }catch(e){console.warn('Cloud upload error:',e.message);}
   finally{_uploadInFlight=false;}
+  return ok;
 }
 async function pullDbFromCloud(){
   if(!LIVE_SYNC.enabled)return null;
-  const cfg=getSupabaseConfig();
   try{
-    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId+'&select=data',cfg.anonKey);
-    if(!rows||!rows.length)return null;
-    return rows[0].data||null;
+    const data=await _workerGet();
+    return data||null;
   }catch(e){console.warn('Cloud pull error:',e.message);return null;}
 }
 async function initCloudSync(){
-  const cfg=getSupabaseConfig();
-  if(!cfg.url||!cfg.anonKey)return false;
+  // Always enable sync — we trust the Worker exists
+  LIVE_SYNC.enabled=true;
   try{
-    // Ping PostgREST — always CORS-enabled on Supabase
-    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+cfg.rowId+'&select=id',cfg.anonKey);
-    // null = table missing; [] = table exists but empty; [{...}] = row exists — all mean server is up
-    LIVE_SYNC.enabled=true;
-    return true;
-  }catch(e){
-    console.error('Supabase connection failed:',e.message);
-    return false;
-  }
+    const r=await fetch(WORKER_URL+'/api/db');
+    if(r.ok)return true;
+  }catch(e){console.warn('Worker ping failed:',e.message);}
+  LIVE_SYNC.enabled=false;
+  return false;
 }
 function backupStamp(){
   const d=new Date();
@@ -3434,24 +3325,19 @@ function backupStamp(){
   return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 async function maybeBackupDb(){
+  // Periodic backup stored in localStorage (cloud backup via Worker main key is sufficient)
   if(!LIVE_SYNC.enabled)return;
   const last=Number(LS.get('lastBackupAt')||0);
   if(Date.now()-last<BACKUP_CFG.minIntervalMs)return;
-  const cfg=getSupabaseConfig();
   try{
-    // Store backup as a separate row with timestamp key
-    const backupId='backup-'+backupStamp();
-    const ok=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:backupId,data:DB,updated_at:new Date().toISOString()});
-    if(ok){
-      LS.set('lastBackupAt',Date.now());
-      // Prune old backups — keep only newest N rows that start with 'backup-'
-      const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=like.backup-*&select=id&order=updated_at.desc',cfg.anonKey);
-      if(Array.isArray(rows)&&rows.length>BACKUP_CFG.keep){
-        const old=rows.slice(BACKUP_CFG.keep).map(r=>r.id);
-        for(const oid of old){
-          await fetch(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+oid,{method:'DELETE',headers:_sbHeaders(cfg.anonKey)});
-        }
-      }
+    // Store a timestamped snapshot in localStorage as local backup
+    const backupKey='bnart4_backup_'+backupStamp();
+    localStorage.setItem(backupKey,JSON.stringify(DB));
+    LS.set('lastBackupAt',Date.now());
+    // Prune old localStorage backups — keep only newest BACKUP_CFG.keep
+    const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('bnart4_backup_')).sort();
+    if(allKeys.length>BACKUP_CFG.keep){
+      allKeys.slice(0,allKeys.length-BACKUP_CFG.keep).forEach(k=>localStorage.removeItem(k));
     }
   }catch(e){console.warn('Backup error:',e.message);}
 }
@@ -3583,7 +3469,7 @@ async function _applyCloudMerge(cloud){
 }
 async function loadDB(){
   // Step 1 — load local snapshot as baseline
-  const local=LS.get('db');
+  const local=LS.get('db')||LS.get('db_last_good');
   if(local)DB=Object.assign({},{...DB,...local});
   await applyDbGuards();
 
@@ -3621,36 +3507,58 @@ function _setLocalWritePending(){
   _localWriteTimer=setTimeout(()=>{_localWritePending=false;},5000);
 }
 
-function save(){
+function _persistLocalDbCopies(){
+  const serialized=JSON.stringify(DB);
+  localStorage.setItem(LOCAL_DB_PRIMARY_KEY,serialized);
+  localStorage.setItem(LOCAL_DB_LASTGOOD_KEY,serialized);
+}
+function _sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms));}
+async function waitForPendingCloudSave(timeoutMs=8000){
+  if(!LIVE_SYNC.enabled)return {cloud:false,skipped:true};
+  const start=Date.now();
+  while(LIVE_SYNC.pendingTimer||_uploadInFlight){
+    if(Date.now()-start>=timeoutMs)return {cloud:false,timedOut:true};
+    await _sleep(120);
+  }
+  return {cloud:true};
+}
+function _findActionButton(selector){
+  const evtBtn=window.event?.target?.closest?.('button');
+  if(evtBtn)return evtBtn;
+  const active=document.activeElement;
+  if(active?.closest){
+    const activeBtn=active.closest('button');
+    if(activeBtn)return activeBtn;
+  }
+  return selector?document.querySelector(selector):null;
+}
+function _loadingMarkup(text){
+  return `<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>${text}</span>`;
+}
+async function withActionLoading(btnOrSelector,loadingText,task){
+  const btn=typeof btnOrSelector==='string'?document.querySelector(btnOrSelector):btnOrSelector;
+  if(!btn)return task();
+  const originalHtml=btn.innerHTML;
+  const originalDisabled=btn.disabled;
+  btn.disabled=true;
+  btn.innerHTML=_loadingMarkup(loadingText||'Saving...');
+  try{
+    return await task();
+  }finally{
+    btn.disabled=originalDisabled;
+    btn.innerHTML=originalHtml;
+  }
+}
+
+function save(options={}){
+  const {awaitCloudAck=false,timeoutMs=8000}=options;
   touchDbMeta();
-  LS.set('db',DB);        // always save locally first (instant)
+  _persistLocalDbCopies(); // always save locally first, with a last-known-good fallback copy
   _setLocalWritePending(); // suppress inbound merges for 5 s
   scheduleCloudSave();    // then push to cloud
   setTimeout(()=>maybeBackupDb(),200);
-}
-
-// ── Universal button loading helpers ─────────────────────────────
-// Usage: const restore = btnLoad(btn, 'Saving…');  then: btnDone(btn, restore);
-const _SPIN='<span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>';
-function btnLoad(btn,label='Saving…'){
-  if(!btn)return null;
-  const orig={html:btn.innerHTML,disabled:btn.disabled};
-  btn.disabled=true;
-  btn.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px">${_SPIN}${label}</span>`;
-  return orig;
-}
-function btnDone(btn,orig){
-  if(!btn||!orig)return;
-  btn.disabled=orig.disabled;
-  btn.innerHTML=orig.html;
-}
-// Convenience: find a button by its onclick text snippet and load it
-function btnLoadByOnclick(snippet,label){
-  const btn=document.querySelector(`[onclick*="${snippet}"]`);
-  return btn?{btn,orig:btnLoad(btn,label)}:null;
-}
-function btnDoneByHandle(handle){
-  if(handle)btnDone(handle.btn,handle.orig);
+  if(awaitCloudAck)return waitForPendingCloudSave(timeoutMs);
+  return Promise.resolve({cloud:LIVE_SYNC.enabled});
 }
 
 async function initStaff(){
@@ -4151,15 +4059,29 @@ function bcSVGPrint(id,h=36){
 }
 
 /* ═══ REGISTER PATIENT ══════════════════════════════════════ */
-function regPt(only=false){
+async function regPt(only=false){
   const name=document.getElementById('rn').value.trim();
   if(!name){toast('Patient name is required','err');return;}
   const phone=document.getElementById('rph').value.trim();
   if(!phone){toast('Phone number is required','err');return;}
 
   // ── Loading spinner on the Register button ──
-  const regBtn=document.querySelector('[onclick*="regPt"]');
-  const origLabel=regBtn?regBtn.innerHTML:'';
+  const regBtn=_findActionButton();
+  await withActionLoading(regBtn,only?'Registering...':'Registering & opening order...',async()=>{
+    const savedPid=genId('BNL-',DB.nextPt++);
+    const savedPt={id:savedPid,name,dob:document.getElementById('rdob').value,age:document.getElementById('rage').value,gender:document.getElementById('rgen').value,phone,wa:document.getElementById('rwa').value||phone,email:document.getElementById('rem').value,addr:document.getElementById('radr').value,emerg:document.getElementById('rec').value,bg:document.getElementById('rbg').value,ref:document.getElementById('rref').value,refType:document.getElementById('rreftype').value,hosp:document.getElementById('rhosp').value,fasting:document.getElementById('rfst').value,notes:document.getElementById('rnotes').value,created:now(),createdBy:CU?.username};
+    savedPt.updatedAt=Date.now();
+    DB.patients.push(savedPt);
+    auditLog('PATIENT','Patient registered: '+name,savedPid,{save:false});
+    await save({awaitCloudAck:true});
+    populateRefFilter();
+    toast(`Patient registered! ID: ${savedPid} âœ…`);
+    ['rn','rdob','rage','rph','rwa','rem','radr','rec','rnotes','rref','rhosp'].forEach(i=>{const e=document.getElementById(i);if(e)e.value='';});
+    ['rgen','rbg','rfst','rreftype'].forEach(i=>{const e=document.getElementById(i);if(e)e.selectedIndex=0;});
+    updateBadges();
+    if(!only){setTimeout(()=>{buildOrdCats();document.getElementById('om-pt').value=savedPid;om('m-ord')},200);}
+  });
+  /*
   if(regBtn){regBtn.disabled=true;regBtn.innerHTML='<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span>Registering…</span>';}
   function _restoreRegBtn(){if(regBtn){regBtn.disabled=false;regBtn.innerHTML=origLabel;}}
 
@@ -4178,7 +4100,7 @@ function regPt(only=false){
     ['rgen','rbg','rfst','rreftype'].forEach(i=>{const e=document.getElementById(i);if(e)e.selectedIndex=0;});
     updateBadges();
     if(!only){setTimeout(()=>{buildOrdCats();document.getElementById('om-pt').value=pid;om('m-ord')},200);}
-  },500);
+  */
 }
 
 /* ═══ PATIENTS ══════════════════════════════════════════════ */
@@ -4865,7 +4787,7 @@ function enterResults(ordId){
 
   html+=`<div class="fg"><label>Analyst Comment / Interpretation</label><textarea id="res-comment" style="min-height:60px">${ord.comment||''}</textarea></div>`;
   document.getElementById('res-m-b').innerHTML=html;
-  ord.status='In Progress';ord.updatedAt=Date.now();save();om('m-res');
+  ord.status='In Progress';save();om('m-res');
 }
 
 function autoFlagInput(testId,gender){
@@ -4889,7 +4811,7 @@ function syncFlagColor(testId){
   sel.style.color=abn?'var(--r)':sel.value==='Neg'?'var(--grn)':'var(--ink)';
 }
 
-function saveResults(markReady){
+async function saveResults(markReady){
   const ord=DB.orders.find(o=>o.id===actOrdId);if(!ord)return;
 
   // ── Loading state: disable all action buttons while saving ──
@@ -4916,8 +4838,8 @@ function saveResults(markReady){
 
   if(markReady===true){
     ord.status='Ready';ord.completed=now();ord.updatedAt=Date.now();ord.approvedBy=CU?.username;
-    auditLog('APPROVE','Results approved & marked Ready',ord.id);
-    save();
+    auditLog('APPROVE','Results approved & marked Ready',ord.id,{save:false});
+    await save({awaitCloudAck:true});
     // FIX: keep write-pending lock alive through the UI transition
     // so the poll on other devices cannot bounce the status back
     setTimeout(()=>{
@@ -4930,12 +4852,12 @@ function saveResults(markReady){
     },600);
   } else if(markReady==='pending'){
     ord.status='Pending Approval';ord.updatedAt=Date.now();
-    auditLog('RESULT','Results submitted for approval',ord.id);
-    save();
+    auditLog('RESULT','Results submitted for approval',ord.id,{save:false});
+    await save({awaitCloudAck:true});
     setTimeout(()=>{_restoreBtns();cm('m-res');toast('Results submitted for approval.');updateBadges();},600);
   } else {
-    auditLog('RESULT','Results saved as draft',ord.id);
-    save();
+    auditLog('RESULT','Results saved as draft',ord.id,{save:false});
+    await save({awaitCloudAck:true});
     setTimeout(()=>{_restoreBtns();cm('m-res');toast('Saved as draft.');updateBadges();},400);
   }
 }
@@ -5111,7 +5033,7 @@ function togglePatientMode(mode){
     newDiv.style.display='block';
   }
 }
-function placeScan(){
+async function placeScan(){
   const mode=document.querySelector('input[name="pt-sel"]:checked').value;
   let ptId, pt={};
 
@@ -5157,17 +5079,16 @@ function placeScan(){
   DB.scans.push(sc);
   const invId=genId('BNL-INV-',DB.nextInv++);
   DB.invoices.push({id:invId,ordId:scId,ptId,ptName:pt.name||'',ptRef:pt.referrer||'',tests:[{name:sc.type,price}],subtotal:price,discount:{type:'none',value:0,amount:0},total:price,paid:0,status:'Unpaid',created:now(),isScan:true});
-  sc.updatedAt=Date.now();
-  const scanBtn=document.querySelector('[onclick*="addScan"],[onclick*="saveScan"]');
-  const scanH=btnLoad(scanBtn,'Saving…');
-  save();
-  setTimeout(()=>{
-    btnDone(scanBtn,scanH);
+  await withActionLoading(_findActionButton(),'Saving scan request...',async()=>{
+    await save({awaitCloudAck:true});
     cm('m-scan');
-    if(mode==='new'){toast(`Patient ${pt.name} registered! Scan ${scId} requested! ✅`);}
-    else{toast(`Scan ${scId} requested! ✅`);}
+    if(mode==='new'){
+      toast(`Patient ${pt.name} registered! Scan ${scId} requested!`);
+    }else{
+      toast(`Scan ${scId} requested!`);
+    }
     renderScans();updScanStats();
-  },500);
+  });
 }
 let actScId='', currentFilterStat='';
 function renderScans(){
@@ -5209,10 +5130,13 @@ function updScanStats(){
   document.getElementById('sc-rv').textContent=filteredInv.reduce((s,i)=>s+(i.paid||0),0).toFixed(0);
 }
 function enterScanRes(id){actScId=id;document.getElementById('scr-f').value='';document.getElementById('scr-i').value='';document.getElementById('scr-r').value='';om('m-scanr');}
-function saveScanRes(){
+async function saveScanRes(){
   const sc=DB.scans.find(s=>s.id===actScId);if(!sc)return;
   sc.findings=document.getElementById('scr-f').value;sc.impression=document.getElementById('scr-i').value;sc.radiologist=document.getElementById('scr-r').value;sc.status='Completed';sc.completed=now();sc.completedBy=CU?.username;
-  save();cm('m-scanr');renderScans();toast('Scan findings saved!');
+  await withActionLoading(_findActionButton(),'Saving final scan...',async()=>{
+    await save({awaitCloudAck:true});
+    cm('m-scanr');renderScans();toast('Scan findings saved!');
+  });
 }
 function printScan(id){
   const sc=DB.scans.find(s=>s.id===id);if(!sc)return;
@@ -5363,29 +5287,20 @@ function viewInv(id){
   document.getElementById('mpay-btn').style.display=bal>0?'':'none';
   om('m-inv');
 }
-function recPay(id){
+async function recPay(id){
   const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
   const amt=parseFloat(document.getElementById('pay-amt')?.value)||0;
-  if(amt<=0){toast('Enter a valid amount','err');return;}
-  const payBtn=document.getElementById('mpay-btn');
-  const h=btnLoad(payBtn,'Recording…');
   inv.paid=(inv.paid||0)+amt;
   if(inv.paid>=inv.total){inv.paid=inv.total;inv.status='Paid';}else if(inv.paid>0)inv.status='Partial';
-  inv.updatedAt=Date.now();
   if(!inv.paymentHistory)inv.paymentHistory=[];
   inv.paymentHistory.push({amount:amt,date:now(),by:CU?.username});
-  auditLog('PAYMENT','GHS '+amt.toFixed(2)+' recorded for '+inv.ptName,inv.id);
-  save();
-  setTimeout(()=>{btnDone(payBtn,h);cm('m-inv');renderBill();toast(`GHS ${amt.toFixed(2)} recorded! ✅`);},500);
+  auditLog('PAYMENT','GHS '+amt.toFixed(2)+' recorded for '+inv.ptName,inv.id,{save:false});
+  await withActionLoading(document.getElementById('mpay-btn'),'Saving payment...',async()=>{
+    await save({awaitCloudAck:true});
+    cm('m-inv');renderBill();toast(`GHS ${amt.toFixed(2)} recorded!`);
+  });
 }
-function qPay(id){
-  const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
-  const qBtn=document.querySelector(`[onclick*="qPay('${id}')"]`);
-  const qH=btnLoad(qBtn,'Saving…');
-  inv.paid=inv.total;inv.status='Paid';inv.updatedAt=Date.now();
-  save();
-  setTimeout(()=>{btnDone(qBtn,qH);renderBill();toast('Marked as paid! ✅');},500);
-}
+function qPay(id){const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;inv.paid=inv.total;inv.status='Paid';save();renderBill();toast('Marked as paid!');}
 function printInv(){
   const inv=DB.invoices.find(i=>i.id===actInvId);if(!inv)return;
   const cfg=DB.settings;
@@ -5709,22 +5624,30 @@ function saveStaff(){
   if(p&&/^(.)\1+$/.test(p)){toast('Password is too simple — avoid repeated characters','err');return;}
   const existing=DB.staff.find(s=>s.username===u&&s.id!==_editStaffId);
   if(existing){toast('Username already exists','err');return;}
-  const saveBtn=document.querySelector('[onclick*="saveStaff"],[onclick*="addStaff"]');
-  const h=btnLoad(saveBtn,'Saving…');
   if(_editStaffId!==null){
-    const s=DB.staff.find(x=>x.id===_editStaffId);if(!s){btnDone(saveBtn,h);return;}
-    s.name=n;s.username=u;s.role=role;s.phone=phone;s.updatedAt=Date.now();
+    // Edit existing
+    const s=DB.staff.find(x=>x.id===_editStaffId);if(!s)return;
+    s.name=n;s.username=u;s.role=role;s.phone=phone;
+    if(p){
+      // Hash new password before storing — save happens after async resolves
+      sha256hex(p).then(hashed=>{s.password=hashed;save();});
+    }
     s.photo=_staffPhotoData||s.photo||null;
+    toast('Staff member updated!');
     auditLog('STAFF','Staff member updated: '+n,String(_editStaffId));
-    const finish=()=>{save();setTimeout(()=>{btnDone(saveBtn,h);cm('m-staff');renderStaff();toast('Staff updated! ✅');if(_editStaffId===CU?.id){CU.photo=s.photo;updSbUser();}},500);};
-    if(p){sha256hex(p).then(hashed=>{s.password=hashed;finish();});}else finish();
-  }else{
+  } else {
+    // Add new
     sha256hex(p).then(hashed=>{
-      DB.staff.push({id:Date.now(),name:n,username:u,password:hashed,role,phone,photo:_staffPhotoData||null,active:true,created:now(),updatedAt:Date.now()});
-      save();
-      setTimeout(()=>{btnDone(saveBtn,h);cm('m-staff');renderStaff();toast('Staff added! ✅');auditLog('STAFF','New staff added: '+n+' ('+role+')',u);},500);
+      DB.staff.push({id:Date.now(),name:n,username:u,password:hashed,role,phone,photo:_staffPhotoData||null,active:true,created:now()});
+      save();cm('m-staff');renderStaff();
+      toast('Staff member added!');
+      auditLog('STAFF','New staff added: '+n+' ('+role+')',u);
     });
+    return; // async path handles save/close
   }
+  save();cm('m-staff');renderStaff();
+  // Update sidebar avatar if editing self
+  if(_editStaffId===CU?.id){CU.photo=_staffPhotoData||CU.photo||null;updSbUser();}
 }
 
 function addStaff(){saveStaff();} // legacy alias
@@ -5745,7 +5668,7 @@ function printBarcode(id,name){
 function togStaff(id){
   const s=DB.staff.find(x=>x.id===id);if(!s)return;
   if(s.role==='admin'&&DB.staff.filter(x=>x.role==='admin'&&x.active).length<=1&&s.active){toast('Cannot deactivate the only admin','err');return;}
-  s.active=!s.active;s.updatedAt=Date.now();save();renderStaff();
+  s.active=!s.active;save();renderStaff();
 }
 function delStaff(id){
   if(id===CU?.id){toast('Cannot delete yourself','err');return;}
@@ -5791,7 +5714,7 @@ function openParamModal(id=null){
   om('m-param');
 }
 function editParam(id){openParamModal(id);}
-function saveParam(){
+async function saveParam(){
   const name=document.getElementById('par-n').value.trim();
   if(!name){toast('Test name required','err');return;}
   const gv=id=>document.getElementById(id)?.value;
@@ -5805,13 +5728,12 @@ function saveParam(){
     chi:gv('par-ch')!==''?parseFloat(gv('par-ch')):null,
     special:gv('par-sp')
   };
-  p.updatedAt=Date.now();
   if(editParId){const i=DB.params.findIndex(x=>x.id===editParId);if(i>=0)DB.params[i]=p;else DB.params.push(p);}
   else DB.params.push(p);
-  const paramBtn=document.querySelector('[onclick*="saveParam"]');
-  const h=btnLoad(paramBtn,'Saving…');
-  save();
-  setTimeout(()=>{btnDone(paramBtn,h);cm('m-param');renderParams();toast('Parameter saved! ✅');},500);
+  await withActionLoading(_findActionButton(),'Saving parameter...',async()=>{
+    await save({awaitCloudAck:true});
+    cm('m-param');renderParams();toast('Parameter saved!');
+  });
 }
 function delParam(id){if(!confirm('Delete this parameter?'))return;DB.params=DB.params.filter(p=>p.id!==id);save();renderParams();}
 
@@ -5897,7 +5819,7 @@ function addPkgParamChip(id,name){
   chip.innerHTML=`<span>${name}</span><button style="background:none;border:none;cursor:pointer;font-size:.8rem;line-height:1;padding:0" onclick="this.parentElement.remove()">✕</button>`;
   list.appendChild(chip);
 }
-function savePackage(){
+async function savePackage(){
   const name=document.getElementById('pkg-name').value.trim();
   if(!name){toast('Package name required','err');return;}
   const price=parseFloat(document.getElementById('pkg-price').value);
@@ -5906,19 +5828,19 @@ function savePackage(){
   const chips=document.getElementById('pkg-params-list').querySelectorAll('[data-id]');
   const params=[...chips].map(c=>c.dataset.id);
   if(!DB.packages)DB.packages=[];
+  const msg=editPkgId?'Package updated!':'Package saved!';
   if(editPkgId){
     const i=DB.packages.findIndex(p=>p.id===editPkgId);
     const updated={id:editPkgId,name,price,description:desc,params};
     if(i>=0)DB.packages[i]=updated;else DB.packages.push(updated);
-    toast('Package updated!');
   }else{
     DB.packages.push({id:'pkg_'+Date.now(),name,price,description:desc,params});
-    toast('Package saved!');
   }
-  const pkgBtn=document.querySelector('[onclick*="savePackage"]');
-  const h=btnLoad(pkgBtn,'Saving…');
-  save();
-  setTimeout(()=>{btnDone(pkgBtn,h);resetPkgForm();renderPkgList();editPkgId=null;},500);
+  await withActionLoading(_findActionButton(),'Saving package...',async()=>{
+    await save({awaitCloudAck:true});
+    resetPkgForm();renderPkgList();editPkgId=null;
+    toast(msg);
+  });
 }
 
 /* ═══ SEND REPORT (PDF-FIRST FLOW) ══════════════════════════ */
@@ -6229,7 +6151,7 @@ function openExpenseModal(){
   om('m-expense');
 }
 
-function saveExpense(){
+async function saveExpense(){
   const date=document.getElementById('exp-dt').value;
   const cat=document.getElementById('exp-cat').value;
   const desc=document.getElementById('exp-desc').value.trim();
@@ -6252,21 +6174,24 @@ function saveExpense(){
     created:now()
   };
   
-  exp.updatedAt=Date.now();
   DB.expenses.push(exp);
-  const expBtn=document.querySelector('[onclick*="addExpense"]');
-  const h=btnLoad(expBtn,'Saving…');
-  save();
-  setTimeout(()=>{btnDone(expBtn,h);cm('m-expense');renderExpenses();toast('Expense recorded! ✅');},500);
+  await withActionLoading(_findActionButton(),'Saving expense...',async()=>{
+    await save({awaitCloudAck:true});
+    cm('m-expense');
+    renderExpenses();
+    toast('Expense recorded successfully!');
+  });
 }
 
 function approveExp(id){
-  const exp=DB.expenses.find(e=>e.id===id);if(!exp)return;
-  const btn=document.querySelector(`[onclick*="approveExp('${id}')"]`);
-  const h=btnLoad(btn,'Approving…');
-  exp.status='Approved';exp.approvedBy=CU?.username;exp.approvedAt=now();exp.updatedAt=Date.now();
+  const exp=DB.expenses.find(e=>e.id===id);
+  if(!exp)return;
+  exp.status='Approved';
+  exp.approvedBy=CU?.username;
+  exp.approvedAt=now();
   save();
-  setTimeout(()=>{btnDone(btn,h);renderExpenses();toast('Expense approved! ✅');},500);
+  renderExpenses();
+  toast('Expense approved!');
 }
 
 function deleteExp(id){
@@ -6288,13 +6213,16 @@ function togPayMethod(){
   const wrap=document.getElementById('cp-momo-wrap');
   if(wrap)wrap.style.display=(v==='MTN MoMo'||v==='Vodafone Cash'||v==='AirtelTigo Money')?'':'none';
 }
-function submitRequest(){
+async function submitRequest(){
   const name=document.getElementById('cp-name').value.trim();const ph=document.getElementById('cp-ph').value.trim();
   if(!name||!ph){toast('Name and phone required','err');return;}
   DB.requests.push({id:'REQ-'+Date.now(),name,phone:ph,wa:document.getElementById('cp-wa').value||ph,loc:document.getElementById('cp-loc').value,services:cpSvcs,notes:document.getElementById('cp-notes').value,payment:document.getElementById('cp-pay')?.value||'At Lab',status:'New',created:now()});
-  save();updateBadges();
-  document.getElementById('cp-cname').textContent=name;
-  document.getElementById('cp-s1').style.display='none';document.getElementById('cp-s2').style.display='';
+  await withActionLoading(_findActionButton(),'Submitting request...',async()=>{
+    await save({awaitCloudAck:true});
+    updateBadges();
+    document.getElementById('cp-cname').textContent=name;
+    document.getElementById('cp-s1').style.display='none';document.getElementById('cp-s2').style.display='';
+  });
 }
 
 /* ═══ ONLINE REQUESTS ════════════════════════════════════════ */
@@ -6325,7 +6253,7 @@ function contactReq(id){
 }
 function convertReq(id){
   const r=DB.requests.find(x=>x.id===id);if(!r)return;
-  r.status='Converted';r.updatedAt=Date.now();save();
+  r.status='Converted';save();
   document.getElementById('rn').value=r.name;document.getElementById('rph').value=r.phone;document.getElementById('rwa').value=r.wa||r.phone;document.getElementById('radr').value=r.loc||'';document.getElementById('rnotes').value=r.notes||'';
   gp('reg',qni('reg'));toast('Request loaded into registration form');
 }
@@ -6473,17 +6401,19 @@ function renderSecurityStatus(){
   }).join('');
 }
 
-function saveSettings(){
+async function saveSettings(){
   const cfg=DB.settings;
   cfg.name=document.getElementById('cfg-name').value;cfg.addr=document.getElementById('cfg-addr').value;
   cfg.phone=document.getElementById('cfg-phone').value;cfg.email=document.getElementById('cfg-email').value;
   cfg.web=document.getElementById('cfg-web').value;cfg.comm=parseFloat(document.getElementById('cfg-comm').value)||20;
   cfg.waTmpl=document.getElementById('wa-tmpl').value;cfg.smsTmpl=document.getElementById('sms-tmpl')?.value||cfg.smsTmpl||'';cfg.waConf=document.getElementById('wa-conf').value;
   cfg.tat=parseInt(document.getElementById('cfg-tat').value)||4;
-  const sBtn=document.querySelector('[onclick*="saveSettings"]');
-  const sh=btnLoad(sBtn,'Saving…');
-  save();applySettings();auditLog('SETTINGS','System settings updated',null);
-  setTimeout(()=>{btnDone(sBtn,sh);toast('Settings saved! ✅');},500);
+  auditLog('SETTINGS','System settings updated',null,{save:false});
+  await withActionLoading(_findActionButton(),'Saving settings...',async()=>{
+    await save({awaitCloudAck:true});
+    applySettings();
+    toast('Settings saved!');
+  });
 }
 function applySettings(){
   const s=DB.settings;
@@ -7115,7 +7045,6 @@ function reqNewDisc(){
     created:now(),
     appliedTo:ptId
   };
-  disc.updatedAt=Date.now();
   DB.discounts.push(disc);save();
 
   toast(`Discount of GHS ${discAmt.toFixed(2)} applied!`);
@@ -7129,21 +7058,17 @@ function applyDiscCode(code){
 }
 
 function apprDisc(id){
-  const d=DB.discounts.find(x=>x.id===id);if(!d)return;
-  const btn=document.querySelector(`[onclick*="apprDisc('${id}')"]`);
-  const h=btnLoad(btn,'Approving…');
-  d.status='Approved';d.updatedAt=Date.now();
-  save();
-  setTimeout(()=>{btnDone(btn,h);renderDisc();updateBadges();toast('Discount approved! ✅');},500);
+  const d=DB.discounts.find(x=>x.id===id);
+  if(!d)return;
+  d.status='Approved';
+  save();renderDisc();updateBadges();toast('Discount approved!');
 }
 
 function rejDisc(id){
-  const d=DB.discounts.find(x=>x.id===id);if(!d)return;
-  const btn=document.querySelector(`[onclick*="rejDisc('${id}')"]`);
-  const h=btnLoad(btn,'Rejecting…');
-  d.status='Rejected';d.updatedAt=Date.now();
-  save();
-  setTimeout(()=>{btnDone(btn,h);renderDisc();updateBadges();toast('Discount rejected.');},500);
+  const d=DB.discounts.find(x=>x.id===id);
+  if(!d)return;
+  d.status='Rejected';
+  save();renderDisc();updateBadges();toast('Discount rejected');
 }
 
 function deleteDisc(id){
@@ -7627,8 +7552,6 @@ function renderMsgPanel(){
 
 function sendStaffMsg(){
   if(!CU){toast('Not logged in','err');return;}
-  const msgBtn=document.querySelector('[onclick*="sendStaffMsg"]');
-  const h=btnLoad(msgBtn,'Sending…');
   const body=(document.getElementById('msg-body')?.value||'').trim();
   if(!body){toast('Type a message first','err');return;}
   if(body.length>500){toast('Message too long (max 500 characters)','err');return;}
@@ -7651,15 +7574,21 @@ function sendStaffMsg(){
 
   auditLog('MESSAGE',`Message sent to ${to==='all'?'all staff':to}`+(ordId?' re order '+ordId:''),ordId||null);
   save();
-  setTimeout(()=>{
-    btnDone(msgBtn,h);
-    document.getElementById('msg-body').value='';
-    document.getElementById('msg-urgent').checked=false;
-    const cc=document.getElementById('msg-char-count');if(cc)cc.textContent='0 / 500';
-    updateBadges();
-    if(ordId){_msgOrderFilter=ordId;switchMsgTab('order');}else{switchMsgTab('sent');}
-    toast('Message sent! ✅','ok');
-  },400);
+
+  // Reset compose
+  document.getElementById('msg-body').value='';
+  document.getElementById('msg-urgent').checked=false;
+  const cc=document.getElementById('msg-char-count');if(cc)cc.textContent='0 / 500';
+
+  updateBadges();
+
+  // Switch to appropriate tab to show sent message
+  if(ordId){
+    _msgOrderFilter=ordId;switchMsgTab('order');
+  } else {
+    switchMsgTab('sent');
+  }
+  toast('Message sent!','ok');
 }
 
 function deleteMsg(id){
@@ -7726,61 +7655,50 @@ function renderBackupUI(){
 async function loadBackupList(){
   const countEl=document.getElementById('br-cloud-count');
   const tb=document.getElementById('br-cloud-tb');
-  if(!LIVE_SYNC.enabled){if(countEl)countEl.textContent='N/A';return;}
-  if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--ink3);font-size:.73rem">Loading…</td></tr>';
-
-  const cfg=getSupabaseConfig();
-  let list=null;
-  try{
-    list=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=like.backup-*&select=id,updated_at&order=updated_at.desc&limit=100',cfg.anonKey);
-  }catch(e){}
-
-  if(!list){
-    if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--r);font-size:.73rem">Could not load backups — check table exists</td></tr>';
-    if(countEl)countEl.textContent='Error';
+  // Read backups from localStorage
+  const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('bnart4_backup_')).sort().reverse();
+  if(countEl)countEl.textContent=allKeys.length+' files';
+  if(!allKeys.length){
+    if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--ink3);font-size:.73rem">No local backups yet — they are created automatically every 6 hours</td></tr>';
     return;
   }
-
-  if(countEl)countEl.textContent=list.length+' files';
-
-  if(!list.length){
-    if(tb)tb.innerHTML='<tr><td colspan="4" style="padding:.75rem;text-align:center;color:var(--ink3);font-size:.73rem">No cloud backups found yet</td></tr>';
-    return;
-  }
-
-  if(tb)tb.innerHTML=list.map((f,i)=>{
+  if(tb)tb.innerHTML=allKeys.map((k,i)=>{
+    const label=k.replace('bnart4_backup_','');
     const isLatest=i===0;
-    const dt=f.updated_at?new Date(f.updated_at).toLocaleString('en-GB'):'—';
-    const safeid=f.id.replace(/'/g,"\'");
+    const esc=k.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     return`<tr style="border-top:1px solid var(--bdr3)">
       <td style="padding:.5rem .75rem;font-family:'JetBrains Mono',monospace;font-size:.69rem;color:var(--ink2)">
-        ${f.id}${isLatest?'<span style="margin-left:6px;background:var(--grnl);color:var(--grn);border:1px solid var(--grnb);padding:1px 6px;border-radius:var(--radFull);font-size:.62rem;font-weight:700">Latest</span>':''}
+        ${label}${isLatest?'<span style="margin-left:6px;background:var(--grnl);color:var(--grn);border:1px solid var(--grnb);padding:1px 6px;border-radius:var(--radFull);font-size:.62rem;font-weight:700">Latest</span>':''}
       </td>
-      <td style="padding:.5rem .75rem;font-size:.73rem">${dt}</td>
-      <td style="padding:.5rem .75rem;font-size:.73rem;color:var(--ink3)">—</td>
+      <td style="padding:.5rem .75rem;font-size:.73rem">—</td>
+      <td style="padding:.5rem .75rem;font-size:.73rem;color:var(--ink3)">Local</td>
       <td style="padding:.5rem .75rem;text-align:right;display:flex;gap:5px;justify-content:flex-end">
-        <button class="btn btn-o btn-xs" onclick="downloadCloudBackup('${safeid}')">⬇ Download</button>
-        <button class="btn btn-red btn-xs" onclick="restoreFromCloud('${safeid}')">↩ Restore</button>
+        <button class="btn btn-o btn-xs" onclick="downloadLocalBackupByKey('${esc}')">⬇ Download</button>
+        <button class="btn btn-red btn-xs" onclick="restoreFromLocalBackup('${esc}')">↩ Restore</button>
       </td>
     </tr>`;
   }).join('');
 }
 
 async function manualBackupNow(){
-  if(!LIVE_SYNC.enabled){toast('Cloud sync not active — use Download Local Backup instead','info');return;}
   const btn=event?.target;if(btn){btn.disabled=true;btn.textContent='Backing up…';}
-  const cfg=getSupabaseConfig();
-  const backupId='backup-'+backupStamp();
-  let uploadOk=false;
+  const backupKey='bnart4_backup_'+backupStamp();
   try{
-    uploadOk=await _sbUpsert(cfg.url+'/rest/v1/'+cfg.table,cfg.anonKey,{id:backupId,data:DB,updated_at:new Date().toISOString()});
-  }catch(e){console.warn('Backup error:',e.message);}
-  if(btn){btn.disabled=false;btn.textContent='☁ Backup to Cloud Now';}
-  if(!uploadOk){toast('Backup failed — check table exists in Supabase','err');return;}
-  LS.set('lastBackupAt',Date.now());
-  auditLog('SETTINGS','Manual cloud backup created',path);
-  toast('Backup saved to cloud!','ok');
-  renderBackupUI();
+    localStorage.setItem(backupKey,JSON.stringify(DB));
+    if(LIVE_SYNC.enabled)await uploadDbToCloud();
+    LS.set('lastBackupAt',Date.now());
+    const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('bnart4_backup_')).sort();
+    if(allKeys.length>BACKUP_CFG.keep){
+      allKeys.slice(0,allKeys.length-BACKUP_CFG.keep).forEach(k=>localStorage.removeItem(k));
+    }
+    if(btn){btn.disabled=false;btn.textContent='☁ Backup Now';}
+    auditLog('SETTINGS','Manual backup created',backupKey);
+    toast('Backup saved!','ok');
+    renderBackupUI();
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent='☁ Backup Now';}
+    toast('Backup failed: '+e.message,'err');
+  }
 }
 
 function exportLocalBackup(){
@@ -7794,15 +7712,14 @@ function exportLocalBackup(){
   toast('Backup downloaded: '+filename,'ok');
 }
 
-async function downloadCloudBackup(rowId){
-  if(!LIVE_SYNC.enabled)return;
-  const cfg=getSupabaseConfig();
+function downloadLocalBackupByKey(storageKey){
   try{
-    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+rowId+'&select=data',cfg.anonKey);
-    if(!rows||!rows.length){toast('Backup not found','err');return;}
-    const blob=new Blob([JSON.stringify(rows[0].data,null,2)],{type:'application/json'});
+    const raw=localStorage.getItem(storageKey);
+    if(!raw){toast('Backup not found in localStorage','err');return;}
+    const label=storageKey.replace('bnart4_backup_','');
+    const blob=new Blob([raw],{type:'application/json'});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=url;a.download=rowId+'.json';a.click();
+    const a=document.createElement('a');a.href=url;a.download='BNART-backup-'+label+'.json';a.click();
     URL.revokeObjectURL(url);
     toast('Backup downloaded!','ok');
   }catch(e){toast('Download error: '+e.message,'err');}
@@ -7852,25 +7769,21 @@ async function confirmRestore(){
   performRestore(_restoreData,'local file');
 }
 
-async function restoreFromCloud(path,filename){
-  if(!LIVE_SYNC.enabled){toast('Cloud not available','err');return;}
-  if(!confirm(`Restore from cloud backup: ${filename}?\n\nThis will overwrite all current data. This cannot be undone.`))return;
+async function restoreFromLocalBackup(storageKey){
+  const label=storageKey.replace('bnart4_backup_','');
+  if(!confirm(`Restore from backup: ${label}?\n\nThis will overwrite all current data. This cannot be undone.`))return;
   const confirm2=prompt('Type RESTORE to confirm:');
   if(confirm2!=='RESTORE'){toast('Restore cancelled','info');return;}
-  const cfg=getSupabaseConfig();
-  let parsed=null;
   try{
-    const rows=await _sbGet(cfg.url+'/rest/v1/'+cfg.table+'?id=eq.'+path+'&select=data',cfg.anonKey);
-    if(!rows||!rows.length){toast('Could not fetch backup from cloud','err');return;}
-    parsed=rows[0].data;
-  }catch(e){toast('Download error: '+e.message,'err');return;}
-  if(!parsed||typeof parsed!=='object'){toast('Backup data is corrupted','err');return;}
-  performRestore(parsed,'cloud: '+path);
+    const raw=localStorage.getItem(storageKey);
+    if(!raw){toast('Backup not found','err');return;}
+    const parsed=JSON.parse(raw);
+    if(!parsed||typeof parsed!=='object'){toast('Backup data is corrupted','err');return;}
+    performRestore(parsed,'local backup: '+label);
+  }catch(e){toast('Restore error: '+e.message,'err');}
 }
 
 async function performRestore(data,source){
-  const restBtn=document.getElementById('br-restore-btn');
-  const restH=btnLoad(restBtn,'Restoring…');
   // Take a local snapshot of current data before overwriting
   const snapshotKey='pre-restore-backup-'+Date.now();
   try{localStorage.setItem(snapshotKey,JSON.stringify(DB));}catch(e){}
@@ -7879,20 +7792,18 @@ async function performRestore(data,source){
   await applyDbGuards();
   save();
   auditLog('SETTINGS','Database restored from '+source,null);
-  setTimeout(()=>{
-    btnDone(restBtn,restH);
-    toast('✓ Restore complete! Data loaded from backup. ✅','ok');
-    _restoreData=null;
-    document.getElementById('br-file-name').textContent='No file chosen';
-    document.getElementById('br-restore-btn').style.display='none';
-    document.getElementById('br-file-inp').value='';
-    renderBackupUI();
-    if(CU)initApp();
-  },600);
+  toast('✓ Restore complete! Data has been replaced from backup.','ok');
+  _restoreData=null;
+  document.getElementById('br-file-name').textContent='No file chosen';
+  document.getElementById('br-restore-btn').style.display='none';
+  document.getElementById('br-file-inp').value='';
+  renderBackupUI();
+  // Re-render active page content to reflect restored data
+  if(CU)initApp();
 }
 
 /* ═══ AUDIT LOG ═══════════════════════════════════════════════ */
-function auditLog(action,details,recordId){
+function auditLog(action,details,recordId,options={}){
   if(!DB.auditlog)DB.auditlog=[];
   DB.auditlog.push({
     ts:new Date().toISOString(),
@@ -7904,7 +7815,7 @@ function auditLog(action,details,recordId){
     recordId:recordId||null
   });
   if(DB.auditlog.length>5000)DB.auditlog=DB.auditlog.slice(-5000);
-  save();
+  if(options.save!==false)save();
   if(DB.auditlog.length>5000)DB.auditlog=DB.auditlog.slice(-5000);
 }
 
@@ -8105,10 +8016,7 @@ function clearAuditLog(){
   DB.auditlog=[];
   // Add a single entry recording who cleared it
   auditLog('DELETE',`Audit log cleared by ${clearedBy} — ${count} entries removed. Backup: ${filename}`,null);
-  const clrBtn=document.querySelector('[onclick*="clearAuditLog"]');
-  const clrH=btnLoad(clrBtn,'Clearing…');
-  save();
-  setTimeout(()=>{btnDone(clrBtn,clrH);renderAuditLog();toast(`Audit log cleared. Backup saved as ${filename}. ✅`);},500);
+  save();renderAuditLog();toast(`Audit log cleared. Backup saved as ${filename}.`);
 }
 
 // exportAuditLog — replaced by exportAuditLogFiltered (period-aware)
@@ -8159,7 +8067,7 @@ function calcRecVariance(){
   }
 }
 
-function submitReconcile(){
+async function submitReconcile(){
   const date=document.getElementById('rec-date').value;
   const cash=parseFloat(document.getElementById('rec-cash').value);
   if(!date||isNaN(cash)){toast('Fill in date and cash counted','err');return;}
@@ -8173,15 +8081,12 @@ function submitReconcile(){
     status:Math.abs(variance)<0.01?'Balanced':variance>0?'Surplus':'Shortfall',
     created:now()
   });
-  auditLog('PAYMENT','Cash reconciliation submitted for '+date,'REC');
-  const recBtn=document.querySelector('[onclick*="submitReconcile"]');
-  const recH=btnLoad(recBtn,'Submitting…');
-  save();
-  setTimeout(()=>{
-    btnDone(recBtn,recH);
+  auditLog('PAYMENT','Cash reconciliation submitted for '+date,'REC',{save:false});
+  await withActionLoading(_findActionButton(),'Submitting reconciliation...',async()=>{
+    await save({awaitCloudAck:true});
     cm('m-reconcile');renderReconcile();
-    toast(Math.abs(variance)<0.01?'Reconciliation submitted — balanced! ✅':'Reconciliation submitted with variance of GHS '+Math.abs(variance).toFixed(2),'ok');
-  },500);
+  toast(Math.abs(variance)<0.01?'Reconciliation submitted — balanced! ✓':'Reconciliation submitted with variance of GHS '+Math.abs(variance).toFixed(2),'ok');
+  });
 }
 
 function renderReconcile(){
@@ -8304,35 +8209,26 @@ window.addEventListener('DOMContentLoaded',async()=>{
   }
 });
 
-// FIX Bug 4: sendBeacon cannot carry custom headers — Supabase rejects unauthenticated calls.
-// Use fetch with keepalive=true which DOES support headers AND survives tab close in modern browsers.
-// Synchronous XHR kept as last-resort fallback.
+// fetch with keepalive=true survives tab/window close in modern browsers.
 function _flushToCloud(){
   if(!LIVE_SYNC.enabled)return;
-  const cfg=getSupabaseConfig();
-  const url=cfg.url+'/rest/v1/'+cfg.table;
-  const body=JSON.stringify({id:cfg.rowId||SB_ROW_ID,data:DB,updated_at:new Date().toISOString()});
+  const body=JSON.stringify(Object.assign({},DB,{
+    _meta:Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:Date.now()})
+  }));
   try{
-    fetch(url,{
+    // keepalive: true — request survives tab close / bfcache navigation
+    fetch(WORKER_URL+'/api/db',{
       method:'POST',
-      keepalive:true, // survives tab/window close
-      headers:{
-        'Content-Type':'application/json',
-        'apikey':cfg.anonKey,
-        'Authorization':'Bearer '+cfg.anonKey,
-        'Prefer':'resolution=merge-duplicates'
-      },
+      keepalive:true,
+      headers:{'Content-Type':'application/json'},
       body
     });
   }catch(e){
-    // Last-resort synchronous XHR
+    // Last-resort synchronous XHR fallback
     try{
       const x=new XMLHttpRequest();
-      x.open('POST',url,false);
+      x.open('POST',WORKER_URL+'/api/db',false);
       x.setRequestHeader('Content-Type','application/json');
-      x.setRequestHeader('apikey',cfg.anonKey);
-      x.setRequestHeader('Authorization','Bearer '+cfg.anonKey);
-      x.setRequestHeader('Prefer','resolution=merge-duplicates');
       x.send(body);
     }catch(e2){}
   }
