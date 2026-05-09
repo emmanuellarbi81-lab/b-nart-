@@ -208,6 +208,11 @@ body{
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes spin-refresh{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.btn-refreshing{pointer-events:none;opacity:.75}
+.btn-refreshing .refresh-icon{display:inline-block;animation:spin-refresh .65s linear infinite}
+#dash-last-updated{font-size:.63rem;color:var(--ink4);font-family:'JetBrains Mono',monospace;padding:4px 9px;background:var(--surf2);border:1px solid var(--bdr2);border-radius:6px;transition:color .3s}
+#dash-last-updated.flash{color:var(--grn);font-weight:600}
 @keyframes countUp{from{transform:scale(.88);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes shimmer{0%{background-position:-400% 0}100%{background-position:400% 0}}
 @keyframes slideIn{from{transform:translateX(-8px);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -1647,7 +1652,8 @@ body.view-only .vo-banner{display:flex!important}
       <div class="page on" id="page-dash">
         <div class="ph aFadeUp"><div><h2>Dashboard<span class="live-dot" title="Live data"></span></h2><p id="d-greet">Lab overview for today</p></div>
           <div class="ph-act">
-            <button class="btn btn-o btn-sm" onclick="refreshDash()">↻ Refresh</button>
+            <span id="dash-last-updated" title="Last refreshed"></span>
+            <button class="btn btn-o btn-sm" id="dash-refresh-btn" onclick="manualRefreshDash()"><span class="refresh-icon">↻</span> Refresh</button>
             <button class="btn btn-p btn-sm" onclick="gp('reg',qni('reg'))">+ New Patient</button>
           </div>
         </div>
@@ -3987,7 +3993,7 @@ function gp(id,el){
   document.getElementById('page-'+id)?.classList.add('on');
   if(el)el.classList.add('on');
   document.getElementById('tb-title').textContent=TTLS[id]||id;
-  const fns={dash:refreshDash,pts:renderPts,ords:renderOrds,res:renderResList,rpts:renderRpts,scans:renderScans,bill:renderBill,expenses:renderExpenses,analytics:renderAnalytics,staff:renderStaff,params:renderParams,social:renderSocial,reqs:renderReqs,discounts:renderDisc,auditlog:renderAuditLog,reconcile:renderReconcile,settings:()=>{renderBackupUI();renderSecurityStatus();loadCloudConfigUI();const dark=document.documentElement.getAttribute('data-theme')==='dark';const st=document.getElementById('dm-toggle-settings');if(st)st.checked=dark;const sys=document.getElementById('dm-system');if(sys)sys.checked=localStorage.getItem('bnart-theme-system')==='1';}};
+  const fns={dash:()=>_runDashRefresh(false),pts:renderPts,ords:renderOrds,res:renderResList,rpts:renderRpts,scans:renderScans,bill:renderBill,expenses:renderExpenses,analytics:renderAnalytics,staff:renderStaff,params:renderParams,social:renderSocial,reqs:renderReqs,discounts:renderDisc,auditlog:renderAuditLog,reconcile:renderReconcile,settings:()=>{renderBackupUI();renderSecurityStatus();loadCloudConfigUI();const dark=document.documentElement.getAttribute('data-theme')==='dark';const st=document.getElementById('dm-toggle-settings');if(st)st.checked=dark;const sys=document.getElementById('dm-system');if(sys)sys.checked=localStorage.getItem('bnart-theme-system')==='1';}};
   fns[id]?.();
 }
 const qni=p=>document.querySelector(`.ni[data-p="${p}"]`);
@@ -6596,7 +6602,72 @@ function refreshDash(){
   updateBadges();
 }
 
-/* ═══ CHART ═════════════════════════════════════════════════ */
+/* ═══ DASHBOARD REFRESH — ENHANCED ══════════════════════════
+   • manualRefreshDash()  — called by button; shows spinner + toast
+   • _dashAutoRefresh()   — internal; called by 30s timer & tab switch
+   • startDashAutoRefresh() — starts the 30s interval, called in initApp
+══════════════════════════════════════════════════════════════ */
+let _dashAutoTimer=null;
+
+function _updateLastRefreshed(){
+  const el=document.getElementById('dash-last-updated');
+  if(!el)return;
+  const t=new Date();
+  const ts=t.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  el.textContent='Updated '+ts;
+  el.classList.add('flash');
+  setTimeout(()=>el.classList.remove('flash'),1800);
+}
+
+function _runDashRefresh(isManual){
+  // Reload DB from localStorage so all roles see latest data
+  const saved=LS.get('db');
+  if(saved)DB=Object.assign({},DB,saved);
+
+  // Show spinner on button
+  const btn=document.getElementById('dash-refresh-btn');
+  if(btn){
+    btn.classList.add('btn-refreshing');
+    btn.querySelector('.refresh-icon').style.animation='spin-refresh .65s linear infinite';
+  }
+
+  // Small async delay so spinner is visible before heavy DOM work
+  setTimeout(()=>{
+    refreshDash();
+    _updateLastRefreshed();
+
+    // Remove spinner
+    if(btn){
+      btn.classList.remove('btn-refreshing');
+      btn.querySelector('.refresh-icon').style.animation='';
+    }
+
+    // Toast
+    if(isManual){
+      toast('Dashboard updated ✓','ok');
+    } else {
+      toast('Dashboard auto-refreshed','info');
+    }
+  }, 120);
+}
+
+function manualRefreshDash(){
+  _runDashRefresh(true);
+}
+
+function _dashAutoRefresh(){
+  // Only refresh if the dashboard page is currently active
+  const dashPage=document.getElementById('page-dash');
+  if(!dashPage||!dashPage.classList.contains('on'))return;
+  _runDashRefresh(false);
+}
+
+function startDashAutoRefresh(){
+  if(_dashAutoTimer)clearInterval(_dashAutoTimer);
+  _dashAutoTimer=setInterval(_dashAutoRefresh, 30000); // every 30 seconds
+}
+
+
 function buildChart(barsId,lblsId,vals,lbls,color){
   const bEl=document.getElementById(barsId);const lEl=document.getElementById(lblsId);if(!bEl)return;
   const max=Math.max(1,...vals);
@@ -8192,8 +8263,10 @@ function initApp(){
   initAnalyticsMons();
   gp('dash',document.querySelector('.ni.on'));
   refreshDash();
+  _updateLastRefreshed();
   checkResultView();
   updateBadges();
+  startDashAutoRefresh(); // ← auto-refresh every 30s
   // Update cloud status badge after DB load
   setTimeout(updateCloudStatusUI, 500);
 }
