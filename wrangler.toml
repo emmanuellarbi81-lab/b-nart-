@@ -1,4 +1,4 @@
-name = "bnart-lms-api"
+name = "b-nart"
 main = "src/worker.js"
 compatibility_date = "2024-05-09"
 
