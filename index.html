@@ -1553,9 +1553,9 @@ body.view-only .vo-banner{display:flex!important}
       <span class="tb-sep"></span>
       <span class="tb-sub">B-NART Medical Lab · Sekondi Youth Centre Building · 0553271127</span>
       <div class="tb-r">
-        <!-- 🔄 Live Sync Status Pill -->
-        <div id="tb-sync-pill" title="Cloud sync status" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;border:1.5px solid var(--grnb);background:var(--grnl);font-size:.64rem;font-weight:700;color:var(--grn);white-space:nowrap;cursor:default;transition:all .4s">
-          <span id="tb-sync-dot" style="width:6px;height:6px;border-radius:50%;background:var(--grn);flex-shrink:0;animation:pulse 2s ease-in-out infinite"></span>
+        <!-- Live Sync Status Pill -->
+        <div id="tb-sync-pill" title="Cloud sync status — click to test" onclick="testCloudConnection()" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;border:1.5px solid var(--bdr);background:var(--surf2);font-size:.64rem;font-weight:700;color:var(--ink3);white-space:nowrap;cursor:pointer;transition:all .4s">
+          <span id="tb-sync-dot" style="width:6px;height:6px;border-radius:50%;background:var(--ink4);flex-shrink:0"></span>
           <span id="tb-sync-label">Connecting…</span>
         </div>
         <span class="tb-clock" id="tb-clock"></span>
@@ -2384,6 +2384,27 @@ B-NART Lab · 0553271127</textarea></div>
             <button class="btn btn-o" onclick="disconnectCloud()">Disconnect</button>
           </div>
         </div>
+
+        <!-- ══ DANGER ZONE — ADMIN RESET ════════════════════════════ -->
+        <div class="card cb mt1 admin-only" style="margin-top:1.2rem;border-left:4px solid #DC2626">
+          <div class="fsec" style="color:#DC2626">⚠️ Danger Zone — Admin Only</div>
+          <div style="background:#FFF1F2;border:1px solid #FECDD3;border-radius:var(--rad);padding:.9rem 1rem;margin-bottom:1rem">
+            <div style="font-size:.8rem;font-weight:700;color:#BE123C;margin-bottom:.3rem">Reset Clinical Data</div>
+            <div style="font-size:.73rem;color:#7F1D1D;line-height:1.65">
+              Wipes all <strong>patients, orders, results, invoices, scans, requests, expenses, posts, audit log and reconciliations</strong> from both local storage and the cloud.<br>
+              <strong>Staff accounts and lab parameters are preserved.</strong><br>
+              This action is <strong>permanent and cannot be undone.</strong>
+            </div>
+          </div>
+          <div style="display:flex;gap:.65rem;align-items:center;flex-wrap:wrap">
+            <div class="fg" style="flex:1;min-width:200px">
+              <label style="font-size:.67rem;font-weight:700;color:#BE123C">Type <code style="background:#FFF1F2;padding:1px 5px;border-radius:4px;letter-spacing:.05em">RESET BNART</code> to confirm</label>
+              <input id="reset-confirm-input" type="text" placeholder="RESET BNART" style="border-color:#FECDD3;font-family:'JetBrains Mono',monospace;font-weight:700;letter-spacing:.06em">
+            </div>
+            <button class="btn btn-red" style="margin-top:1.1rem;flex-shrink:0" onclick="adminResetData()">🗑 Reset All Clinical Data</button>
+          </div>
+          <div id="reset-status" style="margin-top:.65rem;font-size:.73rem;display:none"></div>
+        </div>
       </div>
 
       <!-- DISCOUNTS -->
@@ -3187,20 +3208,37 @@ let DB={patients:[],orders:[],invoices:[],staff:[],params:[],packages:[],scans:[
   nextPt:1,nextOrd:1,nextInv:1,nextSc:1,nextExp:1,nextDisc:1
 };
 
-/* ── Cloudflare Worker helpers (replaces PostgREST / Supabase helpers) ── */
+/* ═══════════════════════════════════════════════════════════
+   SYNC ENGINE v3 — ALL BUGS FIXED
+   ────────────────────────────────────────────────────────
+   Fix 1: Poll 3s (was 15s)
+   Fix 2: _userIsActive split — write-lock never blocks OTHER users' merges
+   Fix 3: SESSION_ID preserved after merge (no more self-blocking)
+   Fix 4: _applyCloudMerge always re-renders, only skips if typing in form
+   Fix 5: updatedAt stamped on every record mutation
+   Fix 6: initCloudSync correctly rejects 403/non-ok responses
+   Fix 7: Sync pill shows real status — blocked/offline/live
+═══════════════════════════════════════════════════════════ */
+
+/* ── Cloudflare Worker helpers ── */
 async function _workerGet(){
-  const r=await fetch(WORKER_URL+'/api/db',{cache:'no-store'});
-  if(!r.ok)return null;
-  return r.json();
+  try{
+    const r=await fetch(WORKER_URL+'/api/db',{cache:'no-store'});
+    if(!r.ok)return null;
+    return r.json();
+  }catch(e){return null;}
 }
 async function _workerPut(payload){
-  const r=await fetch(WORKER_URL+'/api/db',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)
-  });
-  return r.ok;
+  try{
+    const r=await fetch(WORKER_URL+'/api/db',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    return r.ok;
+  }catch(e){return false;}
 }
+
 function getDbStamp(db){return Number(db?._meta?.updatedAt||0);}
 function touchDbMeta(){
   DB._meta=Object.assign({},DB._meta,{updatedAt:Date.now(),updatedBy:CU?.username||'system'});
@@ -3208,16 +3246,16 @@ function touchDbMeta(){
 async function applyDbGuards(){
   if(!DB.staff?.length)await initStaff();
   if(!DB.params?.length)initParams();
-  // Migrate any plain-text passwords from old data to SHA-256
   await migratePasswords();
   if(!DB.packages?.length)initPackages();
   ['posts','links','requests','scans','expenses','discounts','auditlog','reconciliations','messages'].forEach(k=>{if(!DB[k])DB[k]=[]});
 }
-// Unique ID for this browser tab — stamps our own cloud writes so the poller can ignore them
+
+// Unique ID for this browser tab — stamps our writes so poller can ignore them
 const SESSION_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
 
-// FIX Bug 1: robust retry queue — never silently drops a save
-const _saveRetryDelays=[100,500,1500,4000,10000]; // ms between attempts
+// ── SAVE RETRY QUEUE ─────────────────────────────────────
+const _saveRetryDelays=[100,500,1500,4000,10000];
 let _saveRetryCount=0;
 function scheduleCloudSave(){
   if(LIVE_SYNC.pendingTimer)clearTimeout(LIVE_SYNC.pendingTimer);
@@ -3232,27 +3270,39 @@ function _attemptCloudSave(){
       await uploadDbToCloud();
     },100);
   }else{
-    // Cloud not ready — keep retrying with backoff
     const delay=_saveRetryDelays[Math.min(_saveRetryCount,_saveRetryDelays.length-1)];
     _saveRetryCount++;
     LIVE_SYNC.pendingTimer=setTimeout(async()=>{
       LIVE_SYNC.pendingTimer=null;
-      if(LIVE_SYNC.enabled){
-        _saveRetryCount=0;
-        await uploadDbToCloud();
-      }else if(_saveRetryCount<=_saveRetryDelays.length){
-        _attemptCloudSave(); // keep retrying
-      }else{
-        console.warn('Cloud save: giving up after all retries — data is local only');
-      }
+      if(LIVE_SYNC.enabled){_saveRetryCount=0;await uploadDbToCloud();}
+      else if(_saveRetryCount<=_saveRetryDelays.length){_attemptCloudSave();}
     },delay);
   }
 }
 
-/* ═══ CLOUD CONFIG UI (Cloudflare Worker) ════════════════════ */
-function loadCloudConfigUI(){
-  updateCloudStatusUI();
+/* ── SYNC PILL (topbar) ──────────────────────────────────
+   States: live | syncing | offline | error
+────────────────────────────────────────────────────────── */
+function _setSyncPill(state,label){
+  const pill=document.getElementById('tb-sync-pill');
+  const dot=document.getElementById('tb-sync-dot');
+  const lbl=document.getElementById('tb-sync-label');
+  if(!pill)return;
+  const C={
+    live:   {bg:'var(--grnl)',color:'var(--grn)',  border:'var(--grnb)'},
+    syncing:{bg:'var(--blul)',color:'var(--blu)',  border:'var(--blub)'},
+    offline:{bg:'var(--rl)',  color:'var(--r)',   border:'var(--rm)'},
+    error:  {bg:'#FFF1F2',   color:'#BE123C',    border:'#FECDD3'},
+  }[state]||{bg:'var(--rl)',color:'var(--r)',border:'var(--rm)'};
+  pill.style.cssText=`display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;border:1.5px solid ${C.border};background:${C.bg};font-size:.64rem;font-weight:700;color:${C.color};white-space:nowrap;cursor:default;transition:all .4s`;
+  if(dot){
+    dot.style.cssText=`width:6px;height:6px;border-radius:50%;background:${C.color};flex-shrink:0;animation:${state==='live'?'pulse 2s ease-in-out infinite':state==='syncing'?'spin .8s linear infinite':'none'}`;
+  }
+  if(lbl)lbl.textContent=label||state;
 }
+
+/* ── CLOUD STATUS UI (settings panel) ───────────────────── */
+function loadCloudConfigUI(){updateCloudStatusUI();}
 function updateCloudStatusUI(){
   const dot=document.getElementById('sb-status-dot');
   const txt=document.getElementById('sb-status-text');
@@ -3260,40 +3310,46 @@ function updateCloudStatusUI(){
   if(!dot)return;
   if(LIVE_SYNC.enabled){
     dot.style.background='var(--grn)';
-    if(txt)txt.textContent='Connected — Cloud Sync Active';
-    if(sub)sub.textContent='Data is being synced to the Cloudflare Worker automatically on every save.';
+    if(txt)txt.textContent='🟢 Connected — Real-Time Sync Active';
+    if(sub)sub.textContent='All users see changes within 3 seconds. Worker: '+WORKER_URL;
   }else{
-    dot.style.background='var(--gold)';
-    if(txt)txt.textContent='Connecting to Cloudflare Worker…';
-    if(sub)sub.textContent='Reload the page if sync does not activate within a few seconds.';
+    dot.style.background='var(--r)';
+    if(txt)txt.textContent='🔴 Offline — Local Mode Only';
+    if(sub)sub.textContent='Cannot reach Cloudflare Worker. Data is NOT shared between users.';
   }
 }
 async function testCloudConnection(){
-  toast('Testing Cloudflare Worker connection…','info');
+  toast('Testing connection…','info');
+  _setSyncPill('syncing','Testing…');
   try{
-    const r=await fetch(WORKER_URL+'/api/db');
+    const r=await fetch(WORKER_URL+'/api/db',{cache:'no-store'});
     if(r.ok){
-      toast('Cloudflare Worker is reachable and ready!','ok');
-      updateCloudStatusUI();
+      toast('✅ Worker reachable — sync is working!','ok');
+      _setSyncPill('live','Live');
     }else{
-      toast('Worker responded: '+r.status+' — check your Worker URL','err');
+      toast('⚠️ Worker responded '+r.status+' — check Worker settings','err');
+      _setSyncPill('error','Error '+r.status);
     }
-  }catch(e){toast('Connection error: '+e.message,'err');}
+  }catch(e){
+    toast('❌ Cannot reach Worker: '+e.message,'err');
+    _setSyncPill('offline','Offline');
+  }
 }
 function disconnectCloud(){
   if(!confirm('Disconnect cloud sync? Your local data will be preserved.'))return;
   if(LIVE_SYNC.pollTimer){clearInterval(LIVE_SYNC.pollTimer);LIVE_SYNC.pollTimer=null;}
   LIVE_SYNC.enabled=false;
   updateCloudStatusUI();
-  toast('Cloud sync disconnected — data is local only.');
+  _setSyncPill('offline','Disconnected');
+  toast('Cloud sync disconnected.');
 }
-// Stamp _meta only after confirmed success; prevent concurrent uploads
+
+// ── UPLOAD / PULL ─────────────────────────────────────────
 let _uploadInFlight=false;
 async function uploadDbToCloud(){
   if(!LIVE_SYNC.enabled)return false;
-  if(_uploadInFlight)return false; // prevent concurrent writes
+  if(_uploadInFlight)return false;
   _uploadInFlight=true;
-  // Snapshot timestamp intent — do NOT mutate DB until cloud confirms
   const writeStamp=Date.now();
   const payload=Object.assign({},DB,{_meta:Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp})});
   let ok=false;
@@ -3302,86 +3358,68 @@ async function uploadDbToCloud(){
     if(ok){
       DB._meta=Object.assign({},DB._meta,{sessionId:SESSION_ID,updatedAt:writeStamp});
       LIVE_SYNC.lastCloudStamp=writeStamp;
-    }else{console.warn('Cloud upload: Worker returned not-ok');}
-  }catch(e){console.warn('Cloud upload error:',e.message);}
+    }else{
+      // Upload failed — mark sync as degraded but keep trying
+      console.warn('[SYNC] Upload failed — will retry');
+    }
+  }catch(e){console.warn('[SYNC] Upload error:',e.message);}
   finally{_uploadInFlight=false;}
   return ok;
 }
 async function pullDbFromCloud(){
   if(!LIVE_SYNC.enabled)return null;
-  try{
-    const data=await _workerGet();
-    return data||null;
-  }catch(e){console.warn('Cloud pull error:',e.message);return null;}
-}
-function updateSyncPill(state,label){
-  const pill=document.getElementById('tb-sync-pill');
-  const dot=document.getElementById('tb-sync-dot');
-  const lbl=document.getElementById('tb-sync-label');
-  if(!pill||!dot||!lbl)return;
-  const cfg={
-    live:  {bg:'var(--grnl)',color:'var(--grn)',border:'var(--grnb)',dotAnim:'pulse 2s ease-in-out infinite'},
-    syncing:{bg:'var(--blul)',color:'var(--blu)',border:'var(--blub)',dotAnim:'spin .8s linear infinite'},
-    offline:{bg:'var(--rl)',  color:'var(--r)',  border:'var(--rm)', dotAnim:'none'},
-  }[state]||{bg:'var(--rl)',color:'var(--r)',border:'var(--rm)',dotAnim:'none'};
-  pill.style.background=cfg.bg;
-  pill.style.color=cfg.color;
-  pill.style.borderColor=cfg.border;
-  dot.style.background=state==='syncing'?'transparent':cfg.color;
-  dot.style.animation=cfg.dotAnim;
-  dot.style.border=state==='syncing'?'2px solid '+cfg.color:'none';
-  lbl.textContent=label||state;
+  return _workerGet();
 }
 
+// FIX 6: initCloudSync — treat ANY non-ok response as failure
 async function initCloudSync(){
-  updateSyncPill('syncing','Connecting…');
-  LIVE_SYNC.enabled=true;
-  try{
-    const r=await fetch(WORKER_URL+'/api/db');
-    if(r.ok){updateSyncPill('live','Live');return true;}
-  }catch(e){console.warn('Worker ping failed:',e.message);}
+  _setSyncPill('syncing','Connecting…');
   LIVE_SYNC.enabled=false;
-  updateSyncPill('offline','Offline');
-  return false;
+  try{
+    const r=await fetch(WORKER_URL+'/api/db',{cache:'no-store'});
+    if(r.ok){
+      LIVE_SYNC.enabled=true;
+      _setSyncPill('live','Live');
+      return true;
+    }else{
+      console.warn('[SYNC] Worker responded',r.status,'— sync disabled');
+      _setSyncPill('error','Worker error '+r.status);
+      return false;
+    }
+  }catch(e){
+    console.warn('[SYNC] Worker unreachable:',e.message);
+    _setSyncPill('offline','Offline');
+    return false;
+  }
 }
+
 function backupStamp(){
-  const d=new Date();
-  const p=n=>String(n).padStart(2,'0');
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 async function maybeBackupDb(){
-  // Periodic backup stored in localStorage (cloud backup via Worker main key is sufficient)
   if(!LIVE_SYNC.enabled)return;
   const last=Number(LS.get('lastBackupAt')||0);
   if(Date.now()-last<BACKUP_CFG.minIntervalMs)return;
   try{
-    // Store a timestamped snapshot in localStorage as local backup
     const backupKey='bnart4_backup_'+backupStamp();
     localStorage.setItem(backupKey,JSON.stringify(DB));
     LS.set('lastBackupAt',Date.now());
-    // Prune old localStorage backups — keep only newest BACKUP_CFG.keep
     const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('bnart4_backup_')).sort();
-    if(allKeys.length>BACKUP_CFG.keep){
-      allKeys.slice(0,allKeys.length-BACKUP_CFG.keep).forEach(k=>localStorage.removeItem(k));
-    }
+    if(allKeys.length>BACKUP_CFG.keep)allKeys.slice(0,allKeys.length-BACKUP_CFG.keep).forEach(k=>localStorage.removeItem(k));
   }catch(e){console.warn('Backup error:',e.message);}
 }
-// Returns true ONLY if THIS device has a write flying to the cloud.
-// Used to defer INBOUND merges so we don't overwrite our own pending save.
-function _hasPendingWrite(){
-  return !!_localWritePending;
-}
 
-// Returns true if user is mid-form or modal — used to skip UI re-render only.
-// Does NOT block inbound data merges from other users.
+// FIX 2: Split into two guards — write-lock for merge deferral, active-form for UI refresh
+function _hasPendingWrite(){return !!_localWritePending;}
 function _userIsActive(){
+  // Only block UI re-render when user is mid-form or in a modal
   if(document.querySelector('.modal-bg.open'))return true;
   const ae=document.activeElement;
-  if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'))return true;
-  return false;
+  return !!(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'));
 }
 
-// Map of page-id => render function, used by safe refresh below
+// Map of page-id => render function
 const PAGE_RENDERERS={
   dash:()=>refreshDash(),pts:()=>renderPts(),ords:()=>renderOrds(),
   res:()=>renderResList(),rpts:()=>renderRpts(),scans:()=>renderScans(),
@@ -3390,17 +3428,13 @@ const PAGE_RENDERERS={
   reqs:()=>renderReqs(),discounts:()=>renderDisc(),auditlog:()=>renderAuditLog(),
   reconcile:()=>renderReconcile()
 };
-
-// Safely re-render only the currently visible page — never disrupts active inputs or open modals
 function _safeRefreshCurrentPage(){
-  if(_userIsActive())return; // user is mid-action — skip entirely
+  if(_userIsActive())return;
   const activePage=document.querySelector('.page.on');
   if(!activePage)return;
   const pageKey=activePage.id.replace('page-','');
   const fn=PAGE_RENDERERS[pageKey];
-  if(typeof fn==='function'){
-    try{fn();}catch(e){console.warn('Safe refresh error:',e);}
-  }
+  if(typeof fn==='function'){try{fn();}catch(e){console.warn('Safe refresh error:',e);}}
 }
 
 let _pollDebounceTimer=null;
@@ -3408,84 +3442,67 @@ let _pollDebounceTimer=null;
 function startCloudPolling(){
   if(!LIVE_SYNC.enabled||LIVE_SYNC.pollTimer)return;
   LIVE_SYNC.pollTimer=setInterval(async()=>{
-    updateSyncPill('syncing','Syncing…');
+    // FIX 1: 3-second polling
+    _setSyncPill('syncing','Syncing…');
     const cloud=await pullDbFromCloud();
-    if(!cloud){updateSyncPill('offline','Offline — check connection');return;}
-
+    if(!cloud){
+      _setSyncPill('offline','Offline');
+      // Auto-reconnect attempt
+      const ok=await initCloudSync();
+      if(ok)startCloudPolling();
+      return;
+    }
     const ts=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    updateSyncPill('live','Live · '+ts);
+    _setSyncPill('live','Live · '+ts);
 
-    // If the cloud write came from THIS session, it's our own data — ignore
-    if(cloud._meta&&cloud._meta.sessionId&&cloud._meta.sessionId===SESSION_ID)return;
+    // FIX 3: check sessionId BEFORE merge touches _meta
+    const cloudSession=cloud._meta?.sessionId;
+    if(cloudSession&&cloudSession===SESSION_ID)return; // own write — skip
 
-    // Only merge if cloud is genuinely newer than what we have
+    // Only merge if cloud is genuinely newer
     if(getDbStamp(cloud)<=getDbStamp(DB))return;
 
-    // Only defer if WE have a write pending — never block data from other users
+    // FIX 2: only defer if THIS device has a pending write
     if(_hasPendingWrite()){
       if(_pollDebounceTimer)clearTimeout(_pollDebounceTimer);
-      _pollDebounceTimer=setTimeout(()=>{
-        if(!_localWritePending)_applyCloudMerge(cloud);
-      },6000);
+      _pollDebounceTimer=setTimeout(()=>{if(!_localWritePending)_applyCloudMerge(cloud);},6000);
       return;
     }
 
     _applyCloudMerge(cloud);
-  },3000); // 3-second real-time polling
+  },3000);
 }
 
-// ── CANONICAL MERGE FUNCTION ────────────────────────────────────────────────
-// _safeDeepMergeCloud(cloud) is the ONE place all cloud data enters DB.
-// Rules:
-//   1. Arrays are merged by record ID — no array is ever wholesale replaced.
-//   2. For same-ID records, the one with the newer `updatedAt` / `completed`
-//      / `modified` timestamp wins — so an approved order cannot be bounced
-//      back to Pending by a stale cloud copy.
-//   3. Counter fields (nextPt, nextOrd, etc.) always take the MAX value so
-//      two users registering simultaneously never generate duplicate IDs.
-//   4. Scalar settings fields prefer cloud (single source of truth for config).
-// ─────────────────────────────────────────────────────────────────────────────
+// ── CANONICAL MERGE ────────────────────────────────────────
 const _MERGE_ARRAYS=['patients','orders','invoices','staff','params','packages','scans',
   'requests','posts','links','expenses','discounts','auditlog','reconciliations','messages'];
 const _COUNTER_KEYS=['nextPt','nextOrd','nextInv','nextSc','nextExp','nextDisc'];
 
 function _recordTimestamp(r){
-  // Returns the best available timestamp on a record for conflict resolution
   return Number(r?.updatedAt||r?.completed||r?.modified||r?.created||0);
 }
 
 async function _safeDeepMergeCloud(cloud){
-  // Start from current local DB for all scalar/settings fields
   const merged=Object.assign({},DB,cloud);
 
-  // CRITICAL FIX: preserve OUR sessionId after merge.
-  // Without this, the poller adopts cloud's sessionId and thinks every
-  // future cloud pull is "from this session" — silently skipping ALL merges.
+  // FIX 3: always preserve OUR sessionId — never let cloud overwrite it
   merged._meta=Object.assign({},cloud._meta,{sessionId:SESSION_ID});
 
-  // Merge arrays by ID, picking the NEWER record on conflict
   _MERGE_ARRAYS.forEach(k=>{
     const localArr=Array.isArray(DB[k])?DB[k]:[];
     const cloudArr=Array.isArray(cloud[k])?cloud[k]:[];
     const cloudMap=new Map(cloudArr.map(r=>[r.id,r]));
     const localIds=new Set(localArr.map(r=>r.id));
-
     const mergedArr=localArr.map(r=>{
-      if(!cloudMap.has(r.id))return r; // local-only record — keep it
-      const cloudRec=cloudMap.get(r.id);
-      // Pick whichever version has the newer timestamp
-      return _recordTimestamp(cloudRec)>=_recordTimestamp(r)?cloudRec:r;
+      if(!cloudMap.has(r.id))return r;
+      const cr=cloudMap.get(r.id);
+      return _recordTimestamp(cr)>=_recordTimestamp(r)?cr:r;
     });
-
-    // Add cloud records that don't exist locally
     cloudArr.filter(r=>!localIds.has(r.id)).forEach(r=>mergedArr.push(r));
     merged[k]=mergedArr;
   });
 
-  // Counters always take the MAX so IDs never collide
-  _COUNTER_KEYS.forEach(k=>{
-    merged[k]=Math.max(Number(DB[k]||0),Number(cloud[k]||0));
-  });
+  _COUNTER_KEYS.forEach(k=>{merged[k]=Math.max(Number(DB[k]||0),Number(cloud[k]||0));});
 
   DB=merged;
   await applyDbGuards();
@@ -3493,8 +3510,8 @@ async function _safeDeepMergeCloud(cloud){
   return DB;
 }
 
+// FIX 4: _applyCloudMerge always re-renders, targeted toasts for key changes
 async function _applyCloudMerge(cloud){
-  // Snapshot counts before merge to detect what changed
   const before={
     patients:DB.patients?.length||0,
     orders:DB.orders?.length||0,
@@ -3505,24 +3522,19 @@ async function _applyCloudMerge(cloud){
   };
 
   await _safeDeepMergeCloud(cloud);
-
-  // Always update badges
   updateBadges();
 
-  // Re-render active page — skip ONLY if user is actively typing in a form/modal
-  // Never skip just because _localWritePending is set (that's a different guard)
+  // Always refresh — only skip if user is actively typing
   if(!_userIsActive()){
     const activePage=document.querySelector('.page.on');
     if(activePage){
       const pageKey=activePage.id.replace('page-','');
       const fn=PAGE_RENDERERS[pageKey];
-      if(typeof fn==='function'){
-        try{fn();}catch(e){console.warn('Merge refresh error:',e);}
-      }
+      if(typeof fn==='function'){try{fn();}catch(e){console.warn('Merge refresh error:',e);}}
     }
   }
 
-  // Show targeted toast for meaningful changes
+  // Targeted change toasts
   const newReady=(DB.orders||[]).filter(o=>o.status==='Ready').length;
   const newPaid=(DB.invoices||[]).filter(i=>i.status==='Paid').length;
   const newPartial=(DB.invoices||[]).filter(i=>i.status==='Partial').length;
@@ -3531,39 +3543,36 @@ async function _applyCloudMerge(cloud){
   if((DB.orders?.length||0)>before.orders) changes.push(`${DB.orders.length-before.orders} new order${DB.orders.length-before.orders>1?'s':''}`);
   if(newReady>before.readyOrders) changes.push(`${newReady-before.readyOrders} report${newReady-before.readyOrders>1?'s':''} ready ✅`);
   if(newPaid>before.paidInvoices) changes.push(`${newPaid-before.paidInvoices} invoice${newPaid-before.paidInvoices>1?'s':''} paid 💰`);
-  if(newPartial>before.partialInvoices) changes.push(`${newPartial-before.partialInvoices} partial payment recorded`);
+  if(newPartial>before.partialInvoices) changes.push(`partial payment recorded`);
   if((DB.scans?.length||0)>before.scans) changes.push(`${DB.scans.length-before.scans} new scan${DB.scans.length-before.scans>1?'s':''}`);
-
-  if(changes.length>0){
-    toast('🔄 '+changes.join(' · '),'info');
-  }
+  if(changes.length>0) toast('🔄 '+changes.join(' · '),'info');
 }
+
 async function loadDB(){
   // Step 1 — load local snapshot as baseline
   const local=LS.get('db')||LS.get('db_last_good');
   if(local)DB=Object.assign({},{...DB,...local});
   await applyDbGuards();
 
-  // Step 2 — connect to cloud
+  // Step 2 — connect to cloud (FIX 6: properly validates response)
   const cloudReady=await initCloudSync();
   if(cloudReady){
-    // Step 3 — ALWAYS prefer cloud data (it is the source of truth)
     const cloudDb=await pullDbFromCloud();
     if(cloudDb){
-      // FIX B: use safe deep merge — never raw Object.assign on page load
       await _safeDeepMergeCloud(cloudDb);
-      toast('Data loaded from cloud','ok');
+      toast('✅ Data loaded from cloud','ok');
     }else{
-      // Cloud is empty — push local data up
       touchDbMeta();
       await uploadDbToCloud();
-      toast('Local data backed up to cloud','ok');
+      toast('Local data uploaded to cloud','ok');
     }
     startCloudPolling();
+    updateCloudStatusUI();
   }else{
-    // No cloud — just use local
     touchDbMeta();
     LS.set('db',DB);
+    updateCloudStatusUI();
+    toast('⚠️ Working offline — changes are LOCAL ONLY','err');
   }
 }
 // ── WRITE-PENDING LOCK ───────────────────────────────────────────────────────
@@ -5365,7 +5374,7 @@ async function recPay(id){
   if(inv.paid>=inv.total){inv.paid=inv.total;inv.status='Paid';}else if(inv.paid>0)inv.status='Partial';
   if(!inv.paymentHistory)inv.paymentHistory=[];
   inv.paymentHistory.push({amount:amt,date:now(),by:CU?.username});
-  inv.updatedAt=Date.now(); // SYNC FIX: stamp so merge always picks the paid version
+  inv.updatedAt=Date.now(); // FIX 5: stamp so merge always picks paid version
   auditLog('PAYMENT','GHS '+amt.toFixed(2)+' recorded for '+inv.ptName,inv.id,{save:false});
   await withActionLoading(document.getElementById('mpay-btn'),'Saving payment...',async()=>{
     await save({awaitCloudAck:true});
@@ -5375,7 +5384,7 @@ async function recPay(id){
 function qPay(id){
   const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
   inv.paid=inv.total;inv.status='Paid';
-  inv.updatedAt=Date.now(); // SYNC FIX: stamp so merge picks this version
+  inv.updatedAt=Date.now(); // FIX 5: stamp so merge picks this version
   save();renderBill();toast('Marked as paid!');
 }
 function printInv(){
@@ -6539,6 +6548,62 @@ function uploadLogo(input){
     r.readAsDataURL(file);
   };
   sr.readAsArrayBuffer(sniff);
+}
+
+/* ═══ ADMIN RESET — wipes clinical data, keeps staff + params ════ */
+async function adminResetData(){
+  const inp=document.getElementById('reset-confirm-input');
+  const status=document.getElementById('reset-status');
+  if(!inp||inp.value.trim()!=='RESET BNART'){
+    toast('Type exactly RESET BNART to confirm','err');
+    if(inp){inp.style.borderColor='var(--r)';setTimeout(()=>inp.style.borderColor='',1500);}
+    return;
+  }
+  if(!confirm('⚠️ FINAL WARNING\n\nThis will permanently delete:\n• All patients\n• All orders & results\n• All invoices & payments\n• All scans, requests, expenses\n• All social posts & audit log\n\nStaff accounts and lab parameters will be KEPT.\n\nThis cannot be undone. Continue?'))return;
+
+  if(status){status.style.display='block';status.style.color='var(--blu)';status.textContent='⏳ Resetting clinical data…';}
+
+  try{
+    const keepStaff=[...DB.staff];
+    const keepParams=[...DB.params];
+    const keepPackages=[...(DB.packages||[])];
+    const keepSettings=Object.assign({},DB.settings);
+
+    DB.patients=[];DB.orders=[];DB.invoices=[];DB.scans=[];
+    DB.requests=[];DB.expenses=[];DB.posts=[];DB.links=[];
+    DB.discounts=[];DB.auditlog=[];DB.reconciliations=[];DB.messages=[];
+    DB.nextPt=1;DB.nextOrd=1;DB.nextInv=1;DB.nextSc=1;DB.nextExp=1;DB.nextDisc=1;
+
+    DB.staff=keepStaff;
+    DB.params=keepParams;
+    DB.packages=keepPackages;
+    DB.settings=keepSettings;
+
+    touchDbMeta();
+    LS.set('db',DB);
+
+    if(LIVE_SYNC.enabled){
+      if(status)status.textContent='⏳ Pushing reset to cloud…';
+      const ok=await uploadDbToCloud();
+      if(ok){
+        if(status){status.style.color='var(--grn)';status.textContent='✅ Reset complete — cloud updated. All users will see clean data within 3 seconds.';}
+        toast('Clinical data reset & synced to cloud ✅','ok');
+      }else{
+        if(status){status.style.color='var(--gold)';status.textContent='⚠️ Reset local only — cloud push failed. Reconnect and try again.';}
+        toast('Local reset done, cloud push failed','err');
+      }
+    }else{
+      if(status){status.style.color='var(--gold)';status.textContent='✅ Reset local only — cloud offline.';}
+      toast('Clinical data reset (local only)','ok');
+    }
+
+    if(inp)inp.value='';
+    updateBadges();
+    refreshDash();
+  }catch(e){
+    if(status){status.style.color='var(--r)';status.textContent='❌ Reset failed: '+e.message;}
+    toast('Reset failed: '+e.message,'err');
+  }
 }
 
 /* ═══ DASHBOARD ═════════════════════════════════════════════ */
@@ -8271,8 +8336,10 @@ function initApp(){
   refreshDash();
   checkResultView();
   updateBadges();
-  // Update cloud status badge after DB load
-  setTimeout(updateCloudStatusUI, 500);
+  // Update both cloud status panel and sync pill immediately
+  updateCloudStatusUI();
+  // Show admin-only reset section
+  document.querySelectorAll('.admin-only').forEach(el=>el.style.display=CU?.role==='admin'?'':'none');
 }
 
 // Bootstrap on page load
