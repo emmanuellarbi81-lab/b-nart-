@@ -1553,6 +1553,11 @@ body.view-only .vo-banner{display:flex!important}
       <span class="tb-sep"></span>
       <span class="tb-sub">B-NART Medical Lab · Sekondi Youth Centre Building · 0553271127</span>
       <div class="tb-r">
+        <!-- 🔄 Live Sync Status Pill -->
+        <div id="tb-sync-pill" title="Cloud sync status" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;border:1.5px solid var(--grnb);background:var(--grnl);font-size:.64rem;font-weight:700;color:var(--grn);white-space:nowrap;cursor:default;transition:all .4s">
+          <span id="tb-sync-dot" style="width:6px;height:6px;border-radius:50%;background:var(--grn);flex-shrink:0;animation:pulse 2s ease-in-out infinite"></span>
+          <span id="tb-sync-label">Connecting…</span>
+        </div>
         <span class="tb-clock" id="tb-clock"></span>
         <!-- 🔍 Global Search -->
         <div class="tb-ib" onclick="openGlobalSearch()" title="Search everything (Ctrl+K)" id="gs-trigger" style="display:flex;align-items:center;gap:5px;width:auto;padding:0 10px;min-width:130px;justify-content:flex-start;cursor:pointer">
@@ -3309,14 +3314,34 @@ async function pullDbFromCloud(){
     return data||null;
   }catch(e){console.warn('Cloud pull error:',e.message);return null;}
 }
+function updateSyncPill(state,label){
+  const pill=document.getElementById('tb-sync-pill');
+  const dot=document.getElementById('tb-sync-dot');
+  const lbl=document.getElementById('tb-sync-label');
+  if(!pill||!dot||!lbl)return;
+  const cfg={
+    live:  {bg:'var(--grnl)',color:'var(--grn)',border:'var(--grnb)',dotAnim:'pulse 2s ease-in-out infinite'},
+    syncing:{bg:'var(--blul)',color:'var(--blu)',border:'var(--blub)',dotAnim:'spin .8s linear infinite'},
+    offline:{bg:'var(--rl)',  color:'var(--r)',  border:'var(--rm)', dotAnim:'none'},
+  }[state]||{bg:'var(--rl)',color:'var(--r)',border:'var(--rm)',dotAnim:'none'};
+  pill.style.background=cfg.bg;
+  pill.style.color=cfg.color;
+  pill.style.borderColor=cfg.border;
+  dot.style.background=state==='syncing'?'transparent':cfg.color;
+  dot.style.animation=cfg.dotAnim;
+  dot.style.border=state==='syncing'?'2px solid '+cfg.color:'none';
+  lbl.textContent=label||state;
+}
+
 async function initCloudSync(){
-  // Always enable sync — we trust the Worker exists
+  updateSyncPill('syncing','Connecting…');
   LIVE_SYNC.enabled=true;
   try{
     const r=await fetch(WORKER_URL+'/api/db');
-    if(r.ok)return true;
+    if(r.ok){updateSyncPill('live','Live');return true;}
   }catch(e){console.warn('Worker ping failed:',e.message);}
   LIVE_SYNC.enabled=false;
+  updateSyncPill('offline','Offline');
   return false;
 }
 function backupStamp(){
@@ -3341,17 +3366,16 @@ async function maybeBackupDb(){
     }
   }catch(e){console.warn('Backup error:',e.message);}
 }
-// Returns true ONLY if user has a pending write to cloud (protects our own saves)
-// Separate from the modal/input check below so they can be used independently
+// Returns true ONLY if THIS device has a write flying to the cloud.
+// Used to defer INBOUND merges so we don't overwrite our own pending save.
 function _hasPendingWrite(){
-  return _localWritePending;
+  return !!_localWritePending;
 }
 
-// Returns true if user is mid-action in a form or modal (skip UI refresh only)
+// Returns true if user is mid-form or modal — used to skip UI re-render only.
+// Does NOT block inbound data merges from other users.
 function _userIsActive(){
-  // Any modal currently visible?
   if(document.querySelector('.modal-bg.open'))return true;
-  // Any text input or textarea currently focused?
   const ae=document.activeElement;
   if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.tagName==='SELECT'))return true;
   return false;
@@ -3369,7 +3393,7 @@ const PAGE_RENDERERS={
 
 // Safely re-render only the currently visible page — never disrupts active inputs or open modals
 function _safeRefreshCurrentPage(){
-  if(_userIsActive())return; // user is mid-form — skip UI refresh only
+  if(_userIsActive())return; // user is mid-action — skip entirely
   const activePage=document.querySelector('.page.on');
   if(!activePage)return;
   const pageKey=activePage.id.replace('page-','');
@@ -3384,8 +3408,12 @@ let _pollDebounceTimer=null;
 function startCloudPolling(){
   if(!LIVE_SYNC.enabled||LIVE_SYNC.pollTimer)return;
   LIVE_SYNC.pollTimer=setInterval(async()=>{
+    updateSyncPill('syncing','Syncing…');
     const cloud=await pullDbFromCloud();
-    if(!cloud)return;
+    if(!cloud){updateSyncPill('offline','Offline — check connection');return;}
+
+    const ts=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    updateSyncPill('live','Live · '+ts);
 
     // If the cloud write came from THIS session, it's our own data — ignore
     if(cloud._meta&&cloud._meta.sessionId&&cloud._meta.sessionId===SESSION_ID)return;
@@ -3393,9 +3421,7 @@ function startCloudPolling(){
     // Only merge if cloud is genuinely newer than what we have
     if(getDbStamp(cloud)<=getDbStamp(DB))return;
 
-    // BUG FIX 4: Only defer if WE have a pending write flying to the cloud.
-    // Do NOT block merges just because a modal is open or input focused —
-    // those belong to a different user's session and their data must come through.
+    // Only defer if WE have a write pending — never block data from other users
     if(_hasPendingWrite()){
       if(_pollDebounceTimer)clearTimeout(_pollDebounceTimer);
       _pollDebounceTimer=setTimeout(()=>{
@@ -3405,7 +3431,7 @@ function startCloudPolling(){
     }
 
     _applyCloudMerge(cloud);
-  },3000); // BUG FIX 1: 3-second polling — changes visible within 3s
+  },3000); // 3-second real-time polling
 }
 
 // ── CANONICAL MERGE FUNCTION ────────────────────────────────────────────────
@@ -3424,10 +3450,7 @@ const _MERGE_ARRAYS=['patients','orders','invoices','staff','params','packages',
 const _COUNTER_KEYS=['nextPt','nextOrd','nextInv','nextSc','nextExp','nextDisc'];
 
 function _recordTimestamp(r){
-  // BUG FIX 2: Include paid/status as sentinel — a payment update may not change
-  // any ISO timestamp but DOES have a newer _meta.updatedAt on the parent DB.
-  // For individual records, we also use a hash of key state fields so a status
-  // change from 'Pending' → 'Ready' or 'Unpaid' → 'Paid' is always detected.
+  // Returns the best available timestamp on a record for conflict resolution
   return Number(r?.updatedAt||r?.completed||r?.modified||r?.created||0);
 }
 
@@ -3435,9 +3458,9 @@ async function _safeDeepMergeCloud(cloud){
   // Start from current local DB for all scalar/settings fields
   const merged=Object.assign({},DB,cloud);
 
-  // BUG FIX 3: Preserve OUR local sessionId so the poller never thinks
-  // a future cloud pull is "from this session" due to sessionId pollution.
-  // The _meta.updatedAt from cloud is kept (it drives the stamp comparison).
+  // CRITICAL FIX: preserve OUR sessionId after merge.
+  // Without this, the poller adopts cloud's sessionId and thinks every
+  // future cloud pull is "from this session" — silently skipping ALL merges.
   merged._meta=Object.assign({},cloud._meta,{sessionId:SESSION_ID});
 
   // Merge arrays by ID, picking the NEWER record on conflict
@@ -3471,44 +3494,46 @@ async function _safeDeepMergeCloud(cloud){
 }
 
 async function _applyCloudMerge(cloud){
-  // Snapshot state before merge to detect what changed
+  // Snapshot counts before merge to detect what changed
   const before={
-    patients: DB.patients?.length||0,
-    orders: DB.orders?.length||0,
-    readyOrders: (DB.orders||[]).filter(o=>o.status==='Ready').length,
-    paidInvoices: (DB.invoices||[]).filter(i=>i.status==='Paid').length,
-    partialInvoices: (DB.invoices||[]).filter(i=>i.status==='Partial').length,
-    scans: DB.scans?.length||0,
+    patients:DB.patients?.length||0,
+    orders:DB.orders?.length||0,
+    readyOrders:(DB.orders||[]).filter(o=>o.status==='Ready').length,
+    paidInvoices:(DB.invoices||[]).filter(i=>i.status==='Paid').length,
+    partialInvoices:(DB.invoices||[]).filter(i=>i.status==='Partial').length,
+    scans:DB.scans?.length||0,
   };
 
   await _safeDeepMergeCloud(cloud);
 
-  // Detect meaningful changes to show targeted toasts
-  const changes=[];
-  const newReady=(DB.orders||[]).filter(o=>o.status==='Ready').length;
-  const newPaid=(DB.invoices||[]).filter(i=>i.status==='Paid').length;
-  const newPartial=(DB.invoices||[]).filter(i=>i.status==='Partial').length;
-
-  if((DB.patients?.length||0)>before.patients)
-    changes.push(`${(DB.patients.length)-before.patients} new patient${DB.patients.length-before.patients>1?'s':''} registered`);
-  if((DB.orders?.length||0)>before.orders)
-    changes.push(`${DB.orders.length-before.orders} new order${DB.orders.length-before.orders>1?'s':''}`);
-  if(newReady>before.readyOrders)
-    changes.push(`${newReady-before.readyOrders} report${newReady-before.readyOrders>1?'s':''} ready ✅`);
-  if(newPaid>before.paidInvoices)
-    changes.push(`${newPaid-before.paidInvoices} invoice${newPaid-before.paidInvoices>1?'s':''} paid 💰`);
-  if(newPartial>before.partialInvoices)
-    changes.push(`${newPartial-before.partialInvoices} partial payment${newPartial-before.partialInvoices>1?'s':''} recorded`);
-  if((DB.scans?.length||0)>before.scans)
-    changes.push(`${DB.scans.length-before.scans} new scan${DB.scans.length-before.scans>1?'s':''}`);
-
   // Always update badges
   updateBadges();
 
-  // Always refresh the currently visible page (skip only if user is typing in a form)
-  _safeRefreshCurrentPage();
+  // Re-render active page — skip ONLY if user is actively typing in a form/modal
+  // Never skip just because _localWritePending is set (that's a different guard)
+  if(!_userIsActive()){
+    const activePage=document.querySelector('.page.on');
+    if(activePage){
+      const pageKey=activePage.id.replace('page-','');
+      const fn=PAGE_RENDERERS[pageKey];
+      if(typeof fn==='function'){
+        try{fn();}catch(e){console.warn('Merge refresh error:',e);}
+      }
+    }
+  }
 
-  // Show targeted toast for important changes, generic for minor ones
+  // Show targeted toast for meaningful changes
+  const newReady=(DB.orders||[]).filter(o=>o.status==='Ready').length;
+  const newPaid=(DB.invoices||[]).filter(i=>i.status==='Paid').length;
+  const newPartial=(DB.invoices||[]).filter(i=>i.status==='Partial').length;
+  const changes=[];
+  if((DB.patients?.length||0)>before.patients) changes.push(`${DB.patients.length-before.patients} new patient${DB.patients.length-before.patients>1?'s':''}`);
+  if((DB.orders?.length||0)>before.orders) changes.push(`${DB.orders.length-before.orders} new order${DB.orders.length-before.orders>1?'s':''}`);
+  if(newReady>before.readyOrders) changes.push(`${newReady-before.readyOrders} report${newReady-before.readyOrders>1?'s':''} ready ✅`);
+  if(newPaid>before.paidInvoices) changes.push(`${newPaid-before.paidInvoices} invoice${newPaid-before.paidInvoices>1?'s':''} paid 💰`);
+  if(newPartial>before.partialInvoices) changes.push(`${newPartial-before.partialInvoices} partial payment recorded`);
+  if((DB.scans?.length||0)>before.scans) changes.push(`${DB.scans.length-before.scans} new scan${DB.scans.length-before.scans>1?'s':''}`);
+
   if(changes.length>0){
     toast('🔄 '+changes.join(' · '),'info');
   }
@@ -5340,7 +5365,7 @@ async function recPay(id){
   if(inv.paid>=inv.total){inv.paid=inv.total;inv.status='Paid';}else if(inv.paid>0)inv.status='Partial';
   if(!inv.paymentHistory)inv.paymentHistory=[];
   inv.paymentHistory.push({amount:amt,date:now(),by:CU?.username});
-  inv.updatedAt=Date.now(); // BUG FIX 2: stamp so merge picks this version
+  inv.updatedAt=Date.now(); // SYNC FIX: stamp so merge always picks the paid version
   auditLog('PAYMENT','GHS '+amt.toFixed(2)+' recorded for '+inv.ptName,inv.id,{save:false});
   await withActionLoading(document.getElementById('mpay-btn'),'Saving payment...',async()=>{
     await save({awaitCloudAck:true});
@@ -5350,7 +5375,7 @@ async function recPay(id){
 function qPay(id){
   const inv=DB.invoices.find(i=>i.id===id);if(!inv)return;
   inv.paid=inv.total;inv.status='Paid';
-  inv.updatedAt=Date.now(); // BUG FIX 2: stamp so merge picks this version
+  inv.updatedAt=Date.now(); // SYNC FIX: stamp so merge picks this version
   save();renderBill();toast('Marked as paid!');
 }
 function printInv(){
